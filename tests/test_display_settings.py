@@ -526,6 +526,34 @@ class VerifyTests(unittest.TestCase):
     def use(self, records):
         ds.hypr_monitors = lambda: records
 
+    def use_sequence(self, sequence):
+        """Return each snapshot in turn, then repeat the last one."""
+        state = {"i": 0}
+
+        def next_read():
+            index = min(state["i"], len(sequence) - 1)
+            state["i"] += 1
+            return sequence[index]
+
+        ds.hypr_monitors = next_read
+
+    def test_verify_waits_for_the_compositor_to_settle(self):
+        # Hyprland schedules a rule rather than applying it inline, so the first
+        # read back still shows the old values. Verifying instantly reported a
+        # false rejection and auto-reverted a change that had actually worked.
+        stale = monitors("monitors_laptop.json")
+        settled = json.loads(json.dumps(stale))
+        settled[0]["scale"] = 1.6
+        reads = [stale, stale, settled]
+        self.use_sequence(reads)
+        layout = [{"output": "eDP-1", "mode": "1920x1200@60.00", "scale": 1.6}]
+        self.assertEqual(ds.verify(layout, timeout=2), [])
+
+    def test_verify_gives_up_after_the_timeout(self):
+        self.use(monitors("monitors_laptop.json"))
+        layout = [{"output": "eDP-1", "mode": "1920x1200@60.00", "scale": 1.6}]
+        self.assertTrue(ds.verify(layout, timeout=0))
+
     def test_matching_state_verifies_clean(self):
         self.use(monitors("monitors_laptop.json"))
         layout = [
@@ -542,22 +570,22 @@ class VerifyTests(unittest.TestCase):
     def test_detects_a_mode_the_hardware_refused(self):
         self.use(monitors("monitors_laptop.json"))
         layout = [{"output": "eDP-1", "mode": "3840x2160@60.00", "position": "0x0"}]
-        self.assertTrue(any("not 3840x2160" in p for p in ds.verify(layout)))
+        self.assertTrue(any("not 3840x2160" in p for p in ds.verify(layout, timeout=0)))
 
     def test_detects_a_scale_that_did_not_take(self):
         self.use(monitors("monitors_laptop.json"))
         layout = [{"output": "eDP-1", "mode": "1920x1200@60.00", "scale": 2}]
-        self.assertTrue(any("scale" in p for p in ds.verify(layout)))
+        self.assertTrue(any("scale" in p for p in ds.verify(layout, timeout=0)))
 
     def test_detects_a_position_that_did_not_take(self):
         self.use(monitors("monitors_laptop.json"))
         layout = [{"output": "eDP-1", "mode": "1920x1200@60.00", "position": "1920x0"}]
-        self.assertTrue(any("sits at" in p for p in ds.verify(layout)))
+        self.assertTrue(any("sits at" in p for p in ds.verify(layout, timeout=0)))
 
     def test_detects_a_missing_output(self):
         self.use(monitors("monitors_laptop.json"))
         layout = [{"output": "DP-9", "mode": "1920x1080@60.00"}]
-        self.assertTrue(any("not present" in p for p in ds.verify(layout)))
+        self.assertTrue(any("not present" in p for p in ds.verify(layout, timeout=0)))
 
     def test_current_layout_round_trips_into_rules(self):
         self.use(monitors("monitors_dual.json"))
@@ -576,6 +604,11 @@ class ApplyStateMachineTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         os.environ["XDG_STATE_HOME"] = self.tmp.name
+
+        # The settle wait is real time; the state machine does not need it.
+        self.settle = ds.SETTLE_TIMEOUT
+        ds.SETTLE_TIMEOUT = 0
+        self.addCleanup(lambda: setattr(ds, "SETTLE_TIMEOUT", self.settle))
 
         self.originals = {
             "hypr_monitors": ds.hypr_monitors,

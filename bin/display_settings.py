@@ -28,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,13 @@ PPI_AXIS_TOLERANCE = 0.05
 # hyprctl reports refresh as a float that drifts from the advertised string
 # (60.00300 vs "60.00Hz"). Anything closer than this is the same mode.
 REFRESH_TOLERANCE = 0.5
+
+# Hyprland's CMonitorRuleManager::add() only calls scheduleReload(); the rule
+# is applied later, on the next render.preChecks. Reading state back straight
+# after the eval sees the *old* values and reports a false rejection, so give
+# the compositor a moment to settle before deciding an apply failed.
+SETTLE_TIMEOUT = 3.0
+SETTLE_INTERVAL = 0.1
 
 REVERT_UNIT = "omarchy-display-settings-revert"
 REVERT_SECONDS = 15
@@ -1039,8 +1047,26 @@ def current_layout() -> list[dict[str, Any]]:
     return layout
 
 
-def verify(layout: list[dict[str, Any]]) -> list[str]:
-    """Compare live state to what was asked for. Empty means it took effect."""
+def verify(layout: list[dict[str, Any]], timeout: float | None = None) -> list[str]:
+    """Compare live state to the request, waiting for the compositor to settle.
+
+    Hyprland schedules a rule rather than applying it inline, so the first read
+    back almost always still shows the previous values. Poll until the state
+    matches or the timeout expires; only a mismatch that outlives the timeout
+    is a real hardware rejection.
+    """
+    if timeout is None:
+        timeout = SETTLE_TIMEOUT
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        problems = verify_once(layout)
+        if not problems or time.monotonic() >= deadline:
+            return problems
+        time.sleep(SETTLE_INTERVAL)
+
+
+def verify_once(layout: list[dict[str, Any]]) -> list[str]:
+    """One comparison of live state against the request."""
     live = {str(m.get("name", "")): m for m in hypr_monitors()}
     problems: list[str] = []
     for rule in layout:
