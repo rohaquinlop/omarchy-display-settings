@@ -24,7 +24,9 @@ Item {
   // Working copy: {name, x, y, width, height, disabled, mode, scale, transform, mirror}
   property var tiles: []
   property string selectedName: ""
-  property int snapThreshold: 40
+  // How close a drop must be to a clean alignment before it takes it.
+  // Screen pixels; divided by the canvas factor to reach logical space.
+  property int alignThreshold: 40
 
   signal applyRequested(var layout)
   signal keepRequested()
@@ -70,13 +72,9 @@ Item {
     return Math.min(canvas.width * 0.8 / b.width, canvas.height * 0.8 / b.height)
   }
 
-  // Called once when a drag ends: snap against the other tiles, then publish
-  // the new model. Snapping mid-drag would fight the pointer.
+  // Called once when a drag ends. Attaching mid-drag would fight the pointer,
+  // so the drop position is taken as intent and resolved here.
   function commitTile(name, logicalX, logicalY) {
-    moveTile(name, logicalX, logicalY)
-  }
-
-  function moveTile(name, logicalX, logicalY) {
     var next = []
     var moving = null
     for (var i = 0; i < root.tiles.length; i++) {
@@ -85,9 +83,13 @@ Item {
       next.push(copy)
     }
     if (moving) {
-      var snapped = Model.snap(moving, next, root.snapThreshold / root.factor())
-      moving.x = snapped.x
-      moving.y = snapped.y
+      // attach(), not a snap threshold: a display always ends up flush against
+      // a neighbour, so a drop far from everything closes the gap instead of
+      // preserving it. Hyprland would happily persist dead space between
+      // displays that the pointer cannot cross.
+      var placed = Model.attach(moving, next, root.alignThreshold / root.factor())
+      moving.x = placed.x
+      moving.y = placed.y
     }
     root.tiles = next
   }
@@ -164,7 +166,7 @@ Item {
 
       Text {
         textFormat: Text.PlainText
-        text: "Drag a display to move it. Edges snap."
+        text: "Drag a display to move it. Displays always stay touching."
         color: root.foreground
         opacity: 0.6
         font.family: root.fontFamily

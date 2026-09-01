@@ -82,22 +82,78 @@ function boundingBox(tiles) {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
 }
 
-// Snap a dragged tile so its edges sit flush against a neighbour. Hyprland
-// tolerates gaps and overlaps; people almost never want either.
-function snap(tile, others, threshold) {
-  var x = tile.x
-  var y = tile.y
-  for (var i = 0; i < others.length; i++) {
-    var other = others[i]
-    if (other.name === tile.name) continue
-    var candidatesX = [other.x + other.width, other.x - tile.width, other.x]
-    var candidatesY = [other.y + other.height, other.y - tile.height, other.y]
-    for (var a = 0; a < candidatesX.length; a++)
-      if (Math.abs(x - candidatesX[a]) <= threshold) { x = candidatesX[a]; break }
-    for (var b = 0; b < candidatesY.length; b++)
-      if (Math.abs(y - candidatesY[b]) <= threshold) { y = candidatesY[b]; break }
+// Displays must stay touching. A gap is dead space the pointer cannot cross,
+// and Hyprland will persist one without complaint, so threshold-based snapping
+// is the wrong model: drop a display far enough from its neighbour and the gap
+// simply survives. Instead the dragged display is always attached flush to an
+// edge of its nearest neighbour, at whichever placement is closest to where it
+// was actually dropped. Gaps and overlaps both become unrepresentable.
+
+// Minimum shared edge, as a fraction of the smaller side. Below this two
+// displays touch only at a corner, which is contact in name only.
+var MIN_SHARE = 0.2
+
+function clamp(value, low, high) {
+  return Math.max(low, Math.min(high, value))
+}
+
+// Slide `value` along the shared edge, keeping a usable overlap, then prefer a
+// clean alignment when the drop was already close to one.
+function alongEdge(value, size, otherStart, otherSize, alignThreshold) {
+  var share = Math.min(size, otherSize) * MIN_SHARE
+  var placed = clamp(value, otherStart - size + share, otherStart + otherSize - share)
+  var alignments = [
+    otherStart,                                  // leading edges flush
+    otherStart + otherSize - size,               // trailing edges flush
+    otherStart + (otherSize - size) / 2          // centred
+  ]
+  for (var i = 0; i < alignments.length; i++) {
+    if (Math.abs(placed - alignments[i]) <= alignThreshold) return alignments[i]
   }
-  return { x: Math.round(x), y: Math.round(y) }
+  return placed
+}
+
+function attach(tile, others, alignThreshold) {
+  var neighbours = []
+  for (var n = 0; n < others.length; n++) {
+    var candidate = others[n]
+    if (candidate.name === tile.name || candidate.disabled || candidate.mirror) continue
+    neighbours.push(candidate)
+  }
+  if (!neighbours.length) return { x: Math.round(tile.x), y: Math.round(tile.y) }
+
+  var places = []
+  for (var i = 0; i < neighbours.length; i++) {
+    var other = neighbours[i]
+    var y = alongEdge(tile.y, tile.height, other.y, other.height, alignThreshold)
+    var x = alongEdge(tile.x, tile.width, other.x, other.width, alignThreshold)
+    places.push({ x: other.x + other.width, y: y })   // to its right
+    places.push({ x: other.x - tile.width, y: y })    // to its left
+    places.push({ x: x, y: other.y + other.height })  // below it
+    places.push({ x: x, y: other.y - tile.height })   // above it
+  }
+
+  var best = null
+  for (var p = 0; p < places.length; p++) {
+    var probe = {
+      name: tile.name, x: places[p].x, y: places[p].y,
+      width: tile.width, height: tile.height
+    }
+    var clashes = false
+    for (var q = 0; q < neighbours.length; q++) {
+      if (overlaps(probe, neighbours[q])) { clashes = true; break }
+    }
+    if (clashes) continue
+    var dx = places[p].x - tile.x
+    var dy = places[p].y - tile.y
+    var distance = dx * dx + dy * dy
+    if (!best || distance < best.distance) best = { x: places[p].x, y: places[p].y, distance: distance }
+  }
+
+  // Every attachment overlapped something; leave the drop where it landed and
+  // let validation report it rather than silently placing it somewhere else.
+  if (!best) return { x: Math.round(tile.x), y: Math.round(tile.y) }
+  return { x: Math.round(best.x), y: Math.round(best.y) }
 }
 
 function overlaps(a, b) {
