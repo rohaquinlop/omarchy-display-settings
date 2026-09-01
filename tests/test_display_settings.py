@@ -716,6 +716,31 @@ class ApplyStateMachineTests(unittest.TestCase):
         self.assertEqual(result["stage"], "verify")
         self.assertIsNone(ds.read_pending())
 
+    def test_chained_previews_keep_the_original_layout(self):
+        # Applying again before confirming must not overwrite the pending
+        # layout with the already-previewed state, or the timer restores a
+        # value the user never accepted and the display appears to bounce.
+        ds.apply_layout(self.good_layout())
+        first = ds.read_pending()["layout"]
+
+        # The compositor now reports the previewed scale as current.
+        previewed = json.loads(json.dumps(self.live))
+        previewed[0]["scale"] = 1.6
+        self.live = previewed
+
+        # A second *successful* preview keeps the original pending layout.
+        # (A failed one restores and clears it, which is separately tested.)
+        result = ds.apply_layout([{"output": "eDP-1", "mode": "1920x1200@60.00", "scale": 1.6}])
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(ds.read_pending()["layout"], first)
+        self.assertEqual(first[0]["scale"], 1.25, "the original scale must survive")
+
+    def test_pending_reports_seconds_remaining(self):
+        ds.apply_layout(self.good_layout())
+        self.assertGreater(ds.pending_seconds_remaining(), 0)
+        ds.clear_pending()
+        self.assertEqual(ds.pending_seconds_remaining(), 0)
+
     def test_revert_restores_before_it_cancels_anything(self):
         # Regression: cmd_revert used to run `systemctl stop <unit>.service`
         # first, which terminated the revert service from inside itself before

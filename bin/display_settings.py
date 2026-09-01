@@ -854,6 +854,7 @@ def read_state() -> dict[str, Any]:
             **config,
         },
         "pending": read_pending(),
+        "pendingSeconds": pending_seconds_remaining(),
     }
 
 
@@ -1108,8 +1109,15 @@ def apply_layout(layout: list[dict[str, Any]]) -> dict[str, Any]:
         return {"ok": False, "stage": "validate", "problems": problems}
 
     layout = normalize_positions(layout)
-    previous = current_layout()
-    write_pending({"layout": previous})
+
+    # Chained previews must not lose the user's real starting point. Applying
+    # again before confirming used to overwrite the pending layout with the
+    # already-previewed state, so the timer "restored" a value the user had
+    # never accepted — the display appeared to bounce between two settings.
+    # The first unconfirmed layout is the one to come back to.
+    existing = read_pending()
+    previous = existing["layout"] if existing and existing.get("layout") else current_layout()
+    write_pending({"layout": previous, "expiresAt": time.time() + REVERT_SECONDS})
     armed = arm_revert()
 
     def abandon(stage: str, problems: list[str]) -> dict[str, Any]:
@@ -1140,6 +1148,14 @@ def apply_layout(layout: list[dict[str, Any]]) -> dict[str, Any]:
         "secondsRemaining": REVERT_SECONDS,
         "layout": layout,
     }
+
+
+def pending_seconds_remaining() -> int:
+    """Seconds left on an armed revert, or 0 when none is pending."""
+    pending = read_pending()
+    if not pending or not pending.get("expiresAt"):
+        return 0
+    return max(0, int(round(float(pending["expiresAt"]) - time.time())))
 
 
 def restore(layout: list[dict[str, Any]]) -> None:

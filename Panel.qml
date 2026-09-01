@@ -166,6 +166,18 @@ Panel {
           var parsed = JSON.parse(String(text || "{}"))
           root.outputs = parsed.outputs || []
           root.configInfo = parsed.config || ({})
+          // A revert armed by an earlier preview keeps running whether or not
+          // this panel is open. Pick the countdown back up rather than let the
+          // display change back with no explanation on screen.
+          var remaining = Number(parsed.pendingSeconds || 0)
+          if (remaining > 0) {
+            root.previewing = true
+            root.secondsRemaining = remaining
+            if (!countdown.running) countdown.restart()
+          } else if (!applyProc.running) {
+            root.previewing = false
+            countdown.stop()
+          }
           if (!root.selectedName && root.outputs.length > 0) {
             for (var i = 0; i < root.outputs.length; i++)
               if (root.outputs[i].focused) root.selectedName = root.outputs[i].name
