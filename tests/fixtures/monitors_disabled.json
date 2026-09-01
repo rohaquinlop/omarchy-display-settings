@@ -1,0 +1,2 @@
+[{"id":0,"name":"eDP-1","description":"BOE 0x094C","width":1920,"height":1200,"physicalWidth":300,"physicalHeight":190,"refreshRate":60.0,"x":0,"y":0,"scale":1.25,"transform":0,"focused":true,"vrr":false,"disabled":false,"mirrorOf":"none","availableModes":["1920x1200@60.00Hz"]},
+ {"id":1,"name":"HDMI-A-1","description":"Dell U2718Q","width":0,"height":0,"physicalWidth":597,"physicalHeight":336,"refreshRate":0,"x":0,"y":0,"scale":1.0,"transform":0,"focused":false,"vrr":false,"disabled":true,"mirrorOf":"none","availableModes":[]}]

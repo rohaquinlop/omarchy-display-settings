@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    # The engine is stdlib-only, so this needs nothing but Python.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Unit tests
+        run: python3 -m unittest discover tests -v
+
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Manifest matches the schema the shell enforces
+        # omarchy-plugin-validate is not available here, so mirror its checks:
+        # schemaVersion, required fields, a safe relative entry point per kind,
+        # a non-reserved id, and no symlinks anywhere in the plugin folder.
+        run: |
+          set -euo pipefail
+          jq -e '.schemaVersion == 1' manifest.json > /dev/null
+          for field in id name version kinds entryPoints; do
+            jq -e --arg f "$field" 'has($f)' manifest.json > /dev/null
+          done
+          id=$(jq -r '.id' manifest.json)
+          [[ $id =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+          [[ $id != omarchy.* ]]
+          jq -e '(.kinds | type) == "array" and (.kinds | length) > 0' manifest.json > /dev/null
+          while IFS= read -r ep; do
+            [[ $ep != /* && $ep != *".."* && -f $ep ]] || { echo "bad entry point: $ep" >&2; exit 1; }
+          done < <(jq -r '.entryPoints | to_entries[] | .value' manifest.json)
+          # A bar-widget kind must not gain a panel/overlay/menu kind by accident:
+          # that would hand the summoned surface to the overlay and break
+          # SUPER + CTRL + D. See design.md.
+          jq -e '[.kinds[] | select(. == "overlay" or . == "panel" or . == "menu")] | length == 0' \
+            manifest.json > /dev/null
+          link=$(find . -path ./.git -prune -o -type l -print -quit)
+          [[ -z $link ]] || { echo "symlinks are not allowed: $link" >&2; exit 1; }
+          echo "manifest OK"
+
+  qml:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt6 qmllint
+        run: sudo apt-get update && sudo apt-get install -y qt6-declarative-dev-tools
+      - name: Syntax-check QML
+        # The full lint needs the Omarchy shell for the qs.* modules, which is
+        # not installable here; tests/qmllint.sh does that locally. In CI we can
+        # still catch outright syntax errors.
+        run: |
+          set -euo pipefail
+          for file in *.qml; do
+            echo "== $file"
+            /usr/lib/qt6/bin/qmllint --silent "$file" || true
+          done
+          # Fail only on parse errors, which qmllint reports on stderr as "Error:".
+          if /usr/lib/qt6/bin/qmllint *.qml 2>&1 | grep -q '^Error:'; then
+            /usr/lib/qt6/bin/qmllint *.qml
+            exit 1
+          fi
+          echo "no QML syntax errors"

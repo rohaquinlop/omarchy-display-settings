@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "rohaquinlop.display-settings",
+  "name": "Display settings",
+  "version": "0.1.0",
+  "author": "rohaquinlop",
+  "license": "MIT",
+  "description": "Resolution, refresh rate, arrangement, and the full Hyprland monitor surface — persisted as readable hl.monitor rules in your own monitors.lua.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.monitor"
+  },
+  "barWidget": {
+    "displayName": "Display",
+    "description": "Brightness, text size, scale, resolution, refresh rate, and monitor arrangement",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Launcher for the engine; keeps the documented CLI path stable.
+# The real module lives in display_settings.py (importable for tests/typing).
+exec "$(dirname "$0")/display_settings.py" "$@"

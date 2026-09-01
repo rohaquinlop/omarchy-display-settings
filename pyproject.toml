@@ -1,0 +1,4 @@
+# Project metadata for static analysis only; the plugin is stdlib-only at runtime.
+# Tests: python3 -m unittest discover tests
+[tool.ty.environment]
+root = [".", "./bin"]
