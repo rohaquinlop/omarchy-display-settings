@@ -70,6 +70,12 @@ Item {
     return Math.min(canvas.width * 0.8 / b.width, canvas.height * 0.8 / b.height)
   }
 
+  // Called once when a drag ends: snap against the other tiles, then publish
+  // the new model. Snapping mid-drag would fight the pointer.
+  function commitTile(name, logicalX, logicalY) {
+    moveTile(name, logicalX, logicalY)
+  }
+
   function moveTile(name, logicalX, logicalY) {
     var next = []
     var moving = null
@@ -188,8 +194,16 @@ Item {
             id: tile
             required property var modelData
 
-            x: canvas.offsetX + (modelData.x - canvas.origin.x) * canvas.factor
-            y: canvas.offsetY + (modelData.y - canvas.origin.y) * canvas.factor
+            // Position is set imperatively rather than bound to the model:
+            // `drag.target` writes x/y directly, and a binding would fight it.
+            // Delegates are recreated whenever the model changes, so
+            // Component.onCompleted re-syncs them after every commit.
+            function syncFromModel() {
+              x = canvas.offsetX + (modelData.x - canvas.origin.x) * canvas.factor
+              y = canvas.offsetY + (modelData.y - canvas.origin.y) * canvas.factor
+            }
+            Component.onCompleted: syncFromModel()
+            onWidthChanged: if (!dragArea.drag.active) syncFromModel()
             width: Math.max(24, modelData.width * canvas.factor)
             height: Math.max(18, modelData.height * canvas.factor)
 
@@ -229,27 +243,26 @@ Item {
               }
             }
 
+            // drag.target moves the item itself, so the pointer keeps its
+            // grab for the whole gesture. Rewriting the model on every mouse
+            // move instead made the Repeater rebuild this delegate mid-drag,
+            // destroying the MouseArea holding the grab — the tile jumped once
+            // and then needed a fresh click.
             MouseArea {
+              id: dragArea
               anchors.fill: parent
               cursorShape: Qt.SizeAllCursor
-              property real pressX: 0
-              property real pressY: 0
-              property real startX: 0
-              property real startY: 0
+              drag.target: tile
+              drag.threshold: 0
+              drag.smoothed: false
 
-              onPressed: function(mouse) {
-                root.selectedName = tile.modelData.name
-                pressX = mouse.x
-                pressY = mouse.y
-                startX = tile.modelData.x
-                startY = tile.modelData.y
-              }
+              onPressed: root.selectedName = tile.modelData.name
 
-              onPositionChanged: function(mouse) {
-                if (!pressed) return
-                var dx = (mouse.x - pressX) / canvas.factor
-                var dy = (mouse.y - pressY) / canvas.factor
-                root.moveTile(tile.modelData.name, Math.round(startX + dx), Math.round(startY + dy))
+              onReleased: {
+                root.commitTile(
+                  tile.modelData.name,
+                  Math.round((tile.x - canvas.offsetX) / canvas.factor + canvas.origin.x),
+                  Math.round((tile.y - canvas.offsetY) / canvas.factor + canvas.origin.y))
               }
             }
           }
