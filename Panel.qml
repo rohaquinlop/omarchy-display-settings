@@ -108,10 +108,13 @@ Panel {
   }
 
   function preview(layout) {
-    if (root.busy) return
+    if (root.busy || applyProc.running) return
     root.busy = true
     root.lastError = ""
-    applyProc.payload = JSON.stringify({ layout: layout })
+    // The payload rides on argv, not stdin. Over stdin the engine blocks in
+    // json.load until the pipe closes, and a missed close would leave `busy`
+    // latched true — silently swallowing every later click.
+    applyProc.command = [root.engine, "apply", JSON.stringify({ layout: layout })]
     applyProc.running = true
   }
 
@@ -177,15 +180,16 @@ Panel {
 
   Process {
     id: applyProc
-    property string payload: ""
-    command: [root.engine, "apply", "-"]
-    stdinEnabled: true
-    onRunningChanged: {
-      if (running && payload !== "") {
-        write(payload)
-        stdinEnabled = false
-      }
+    command: []
+
+    // Always clear `busy`, whatever happened. If the engine dies without
+    // producing parseable output, the panel must still accept the next click.
+    onExited: function(exitCode) {
+      root.busy = false
+      if (exitCode !== 0 && root.lastError === "")
+        root.lastError = "the display engine exited with code " + exitCode
     }
+
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -632,7 +636,7 @@ Panel {
               enabled: root.outputs.length > 1
               onClicked: {
                 root.close()
-                arrangeCanvas.show(root.outputs)
+                { arrangeLoader.active = true; arrangeLoader.item.show(root.outputs) }
               }
             }
 
@@ -641,7 +645,7 @@ Panel {
               leftAlign: true
               bordered: true
               text: "Advanced…"
-              onClicked: advancedSheet.open()
+              onClicked: { advancedLoader.active = true; advancedLoader.item.open() }
             }
 
             // Where the settings actually live. The whole point of the plugin,
@@ -662,22 +666,33 @@ Panel {
     }
   }
 
-  Advanced {
-    id: advancedSheet
-    bar: root.bar
-    display: root.selected
-    onApplyRequested: function(changes) {
-      root.preview(root.layoutWith(root.selectedName, changes))
+  // A bar widget is instantiated once per monitor, and a PanelWindow declared
+  // directly inside one stops the widget rendering at all — no error in any
+  // log, just an empty bar slot. No first-party bar widget declares one; the
+  // fullscreen overlays all live in separate panel-kind plugins. Both surfaces
+  // are therefore built on first use.
+  Loader {
+    id: advancedLoader
+    active: false
+    sourceComponent: Advanced {
+      bar: root.bar
+      display: root.selected
+      onApplyRequested: function(changes) {
+        root.preview(root.layoutWith(root.selectedName, changes))
+      }
     }
   }
 
-  Arrange {
-    id: arrangeCanvas
-    bar: root.bar
-    onApplyRequested: function(layout) { root.preview(layout) }
-    onKeepRequested: root.keepChanges()
-    onRevertRequested: root.revertChanges()
-    previewing: root.previewing
-    secondsRemaining: root.secondsRemaining
+  Loader {
+    id: arrangeLoader
+    active: false
+    sourceComponent: Arrange {
+      bar: root.bar
+      previewing: root.previewing
+      secondsRemaining: root.secondsRemaining
+      onApplyRequested: function(layout) { root.preview(layout) }
+      onKeepRequested: root.keepChanges()
+      onRevertRequested: root.revertChanges()
+    }
   }
 }

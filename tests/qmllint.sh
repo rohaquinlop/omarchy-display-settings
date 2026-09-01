@@ -12,9 +12,11 @@
 #      directory containing `qs -> <shell>` fixes it.
 #
 # Baseline: the first-party plugins themselves emit `missing-property`,
-# `unqualified`, and `uncreatable-type` — `bar` is typed QtObject, the Style
-# singleton's members are not statically known, and Quickshell's PanelWindow is
-# not creatable from qmllint's point of view. Those are accepted. Any other
+# `unqualified`, `uncreatable-type`, and `signal-handler-parameters` — `bar` is
+# typed QtObject, the Style singleton's members are not statically known,
+# Quickshell's PanelWindow is not creatable from qmllint's point of view, and
+# Process's `exited` carries a QProcess::ExitStatus qmllint cannot resolve
+# (plugins/image-picker emits three of these). Those are accepted. Any other
 # warning class is a real finding and fails this script.
 
 set -euo pipefail
@@ -23,7 +25,7 @@ SHELL_DIR="${OMARCHY_SHELL_DIR:-/usr/share/omarchy/shell}"
 QMLLINT="${QMLLINT:-/usr/lib/qt6/bin/qmllint}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-ACCEPTED="missing-property unqualified uncreatable-type"
+ACCEPTED="missing-property unqualified uncreatable-type signal-handler-parameters"
 
 if [[ ! -x $QMLLINT ]]; then
   echo "qmllint (Qt6) not found at $QMLLINT; set QMLLINT to override" >&2

@@ -665,6 +665,24 @@ class ApplyStateMachineTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertFalse(result["restored"])
 
+    def test_failed_apply_cancels_the_armed_revert(self):
+        # A failed apply restores immediately, so the armed revert has nothing
+        # left to do. Leaving it running fired a redundant restore later and
+        # left a stale pending file to confuse the next apply.
+        ds.apply_rule = lambda rule: (False, "hardware said no")
+        result = ds.apply_layout(self.good_layout())
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["reverted"])
+        self.assertIsNone(ds.read_pending())
+        self.assertTrue(self.stopped, "the transient unit must be stopped")
+
+    def test_verification_failure_also_cancels(self):
+        result = ds.apply_layout(
+            [{"output": "eDP-1", "mode": "3840x2160@60.00", "position": "0x0"}]
+        )
+        self.assertEqual(result["stage"], "verify")
+        self.assertIsNone(ds.read_pending())
+
     def test_revert_restores_before_it_cancels_anything(self):
         # Regression: cmd_revert used to run `systemctl stop <unit>.service`
         # first, which terminated the revert service from inside itself before

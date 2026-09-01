@@ -1086,19 +1086,26 @@ def apply_layout(layout: list[dict[str, Any]]) -> dict[str, Any]:
     write_pending({"layout": previous})
     armed = arm_revert()
 
+    def abandon(stage: str, problems: list[str]) -> dict[str, Any]:
+        # We restored here and now, so the armed revert has nothing left to do.
+        # Leaving it running would fire a redundant restore later and leave a
+        # stale pending file behind to confuse the next apply.
+        restore(previous)
+        stop_revert_unit()
+        clear_pending()
+        return {"ok": False, "stage": stage, "problems": problems, "reverted": True}
+
     failures = []
     for rule in layout:
         ok, message = apply_rule(rule)
         if not ok:
             failures.append(f"{rule.get('output')}: {message}")
     if failures:
-        restore(previous)
-        return {"ok": False, "stage": "apply", "problems": failures, "reverted": True}
+        return abandon("apply", failures)
 
     problems = verify(layout)
     if problems:
-        restore(previous)
-        return {"ok": False, "stage": "verify", "problems": problems, "reverted": True}
+        return abandon("verify", problems)
 
     return {
         "ok": True,
@@ -1182,12 +1189,21 @@ def cmd_advise() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def load_layout(path: str) -> list[dict[str, Any]]:
-    """Read a layout from a file, or from stdin when path is "-"."""
-    if path == "-":
+def load_layout(source: str) -> list[dict[str, Any]]:
+    """Read a layout from inline JSON, a file path, or stdin ("-").
+
+    Inline JSON is what the QML side uses. Passing it through stdin instead
+    means the caller must close the pipe for json.load to return, and a caller
+    that forgets leaves this process blocked forever holding the UI's busy
+    flag — so argv is the safer contract for a payload this small.
+    """
+    text = source.strip()
+    if text.startswith(("{", "[")):
+        data = json.loads(text)
+    elif source == "-":
         data = json.load(sys.stdin)
     else:
-        with open(path, encoding="utf-8") as handle:
+        with open(source, encoding="utf-8") as handle:
             data = json.load(handle)
     if isinstance(data, dict):
         data = data.get("layout", [])
@@ -1209,9 +1225,9 @@ def main(argv: list[str] | None = None) -> int:
         help="path to the pending-layout file; defaults to the XDG state location",
     )
     apply_parser = sub.add_parser("apply")
-    apply_parser.add_argument("layout", help='path to a layout JSON file, or "-" for stdin')
+    apply_parser.add_argument("layout", help='inline layout JSON, a path to a layout JSON file, or "-" for stdin')
     persist_parser = sub.add_parser("persist")
-    persist_parser.add_argument("layout", help='path to a layout JSON file, or "-" for stdin')
+    persist_parser.add_argument("layout", help='inline layout JSON, a path to a layout JSON file, or "-" for stdin')
 
     args = parser.parse_args(argv)
     try:
