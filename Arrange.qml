@@ -196,16 +196,16 @@ Item {
             id: tile
             required property var modelData
 
-            // Position is set imperatively rather than bound to the model:
-            // `drag.target` writes x/y directly, and a binding would fight it.
-            // Delegates are recreated whenever the model changes, so
-            // Component.onCompleted re-syncs them after every commit.
-            function syncFromModel() {
-              x = canvas.offsetX + (modelData.x - canvas.origin.x) * canvas.factor
-              y = canvas.offsetY + (modelData.y - canvas.origin.y) * canvas.factor
-            }
-            Component.onCompleted: syncFromModel()
-            onWidthChanged: if (!dragArea.drag.active) syncFromModel()
+            // The model stays authoritative: position is bound to it, and a
+            // drag only adds a temporary pixel offset on top. Writing x/y
+            // imperatively instead left the tile wherever the pointer dropped
+            // it — the Repeater reuses delegates, so nothing re-read the model
+            // afterwards and the snapped position never showed on screen.
+            property real dragDX: 0
+            property real dragDY: 0
+
+            x: canvas.offsetX + (modelData.x - canvas.origin.x) * canvas.factor + dragDX
+            y: canvas.offsetY + (modelData.y - canvas.origin.y) * canvas.factor + dragDY
             width: Math.max(24, modelData.width * canvas.factor)
             height: Math.max(18, modelData.height * canvas.factor)
 
@@ -245,26 +245,38 @@ Item {
               }
             }
 
-            // drag.target moves the item itself, so the pointer keeps its
-            // grab for the whole gesture. Rewriting the model on every mouse
-            // move instead made the Repeater rebuild this delegate mid-drag,
-            // destroying the MouseArea holding the grab — the tile jumped once
-            // and then needed a fresh click.
+            // The pointer is tracked in canvas coordinates, not in this item's
+            // own coordinates: the item moves under the cursor as it is
+            // dragged, so a local delta feeds back on itself and stalls.
             MouseArea {
               id: dragArea
               anchors.fill: parent
               cursorShape: Qt.SizeAllCursor
-              drag.target: tile
-              drag.threshold: 0
-              drag.smoothed: false
+              property real grabX: 0
+              property real grabY: 0
 
-              onPressed: root.selectedName = tile.modelData.name
+              onPressed: function(mouse) {
+                root.selectedName = tile.modelData.name
+                var point = mapToItem(canvas, mouse.x, mouse.y)
+                grabX = point.x
+                grabY = point.y
+              }
+
+              onPositionChanged: function(mouse) {
+                if (!pressed) return
+                var point = mapToItem(canvas, mouse.x, mouse.y)
+                tile.dragDX += point.x - grabX
+                tile.dragDY += point.y - grabY
+              }
 
               onReleased: {
-                root.commitTile(
-                  tile.modelData.name,
-                  Math.round((tile.x - canvas.offsetX) / canvas.factor + canvas.origin.x),
-                  Math.round((tile.y - canvas.offsetY) / canvas.factor + canvas.origin.y))
+                var logicalX = Math.round(tile.modelData.x + tile.dragDX / canvas.factor)
+                var logicalY = Math.round(tile.modelData.y + tile.dragDY / canvas.factor)
+                // Clear the offset first so the position binding takes over the
+                // moment the committed model lands.
+                tile.dragDX = 0
+                tile.dragDY = 0
+                root.commitTile(tile.modelData.name, logicalX, logicalY)
               }
             }
           }
