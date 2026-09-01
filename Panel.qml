@@ -22,6 +22,12 @@ Panel {
   readonly property string engine: Quickshell.env("HOME")
     + "/.config/omarchy/plugins/rohaquinlop.display-settings/bin/omarchy-display-settings"
 
+  // Ui/Panel is a bare Item with no implicit size, so a bar widget must take
+  // its dimensions from its own button. Without these the widget loads without
+  // error and renders 0x0 — it simply vanishes from the bar.
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
   property var outputs: []
   property var configInfo: ({})
   property string selectedName: ""
