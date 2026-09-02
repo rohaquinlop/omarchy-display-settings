@@ -28,6 +28,7 @@ Item {
   // Screen pixels; divided by the canvas factor to reach logical space.
   property int alignThreshold: 40
 
+  signal closed()
   signal applyRequested(var layout)
   signal keepRequested()
   signal revertRequested()
@@ -58,7 +59,13 @@ Item {
     root.opened = true
   }
 
-  function hide() { root.opened = false }
+  // Tearing the window down on close is not just tidiness: while the item
+  // lives, reopening shows the same instance, so a plugin reload never reaches
+  // it and code changes appear to have no effect at all.
+  function hide() {
+    root.opened = false
+    root.closed()
+  }
 
   function box() {
     var live = root.tiles.filter(function(t) { return !t.disabled })

@@ -26,6 +26,7 @@ Item {
   property string rawValue: ""
   property string errorText: ""
 
+  signal closed()
   signal applyRequested(var changes)
 
   // A labelled single-line input. Ui/TextField inherits Qt Quick Controls
@@ -99,7 +100,7 @@ Item {
     root.opened = true
   }
 
-  function close() { root.opened = false }
+  function close() { root.opened = false; root.closed() }
 
   function set(field, value) {
     var next = ({})

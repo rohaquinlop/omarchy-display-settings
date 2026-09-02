@@ -689,6 +689,9 @@ Panel {
     sourceComponent: Advanced {
       bar: root.bar
       display: root.selected
+      // Discard the instance on close so the next open builds it fresh from
+      // whatever is on disk. Keeping it alive made plugin reloads invisible.
+      onClosed: Qt.callLater(function() { advancedLoader.active = false })
       onApplyRequested: function(changes) {
         root.preview(root.layoutWith(root.selectedName, changes))
       }
@@ -700,6 +703,7 @@ Panel {
     active: false
     sourceComponent: Arrange {
       bar: root.bar
+      onClosed: Qt.callLater(function() { arrangeLoader.active = false })
       previewing: root.previewing
       secondsRemaining: root.secondsRemaining
       onApplyRequested: function(layout) { root.preview(layout) }
