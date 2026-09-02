@@ -115,6 +115,78 @@ for (const [x, y] of drops) {
   equal(attach(dragged, [off, dragged], ALIGN), { x: 4000, y: 4000 }, "disabled displays are ignored")
 }
 
+// --- reflowAfterResize(): keeping a layout flush across a scale/mode change
+
+// Reproduces the reported bug exactly: HDMI-A-1 at scale 1.25 is 2048 wide
+// logically; dropping to scale 1 makes it 2560 wide, colliding with eDP-1
+// which sat flush at x=2048. Nothing repositioned eDP-1, so validation
+// rejected the change with "displays overlap" for an edit the user never
+// touched.
+{
+  const before = [
+    { name: "HDMI-A-1", x: 0, y: 0, width: 2048, height: 1152 },
+    { name: "eDP-1", x: 2048, y: 0, width: 1536, height: 960 },
+  ]
+  const after = reflowAfterResize(before, "HDMI-A-1", 2048, 1152, 2560, 1152)
+  const edp = after.find((t) => t.name === "eDP-1")
+  equal(edp.x, 2560, "growing the anchor pushes a flush neighbor along with it")
+
+  const grownAnchor = { name: "HDMI-A-1", x: 0, y: 0, width: 2560, height: 1152 }
+  check(!overlaps(grownAnchor, edp), "no overlap remains after the reflow")
+}
+
+// Shrinking pulls a flush neighbor back in, so a gap does not appear either.
+{
+  const before = [
+    { name: "HDMI-A-1", x: 0, y: 0, width: 2560, height: 1152 },
+    { name: "eDP-1", x: 2560, y: 0, width: 1536, height: 960 },
+  ]
+  const after = reflowAfterResize(before, "HDMI-A-1", 2560, 1152, 2048, 1152)
+  equal(after.find((t) => t.name === "eDP-1").x, 2048, "shrinking pulls the flush neighbor back")
+}
+
+// A neighbor on the other side is never affected by a resize.
+{
+  const before = [
+    { name: "left", x: -1536, y: 0, width: 1536, height: 960 },
+    { name: "anchor", x: 0, y: 0, width: 2048, height: 1152 },
+  ]
+  const after = reflowAfterResize(before, "anchor", 2048, 1152, 2560, 1152)
+  equal(after.find((t) => t.name === "left").x, -1536, "a neighbor on the far side is untouched")
+}
+
+// Disabled and mirrored tiles keep whatever position they reported; they are
+// not real occupants of the layout and must not be dragged along.
+{
+  const before = [
+    { name: "anchor", x: 0, y: 0, width: 2048, height: 1152 },
+    { name: "off", x: 2048, y: 0, width: 1536, height: 960, disabled: true },
+  ]
+  const after = reflowAfterResize(before, "anchor", 2048, 1152, 2560, 1152)
+  equal(after.find((t) => t.name === "off").x, 2048, "a disabled neighbor is left alone")
+}
+
+// The height delta reflows a vertical stack the same way the width delta
+// reflows a horizontal one.
+{
+  const before = [
+    { name: "top", x: 0, y: 0, width: 1000, height: 2048 },
+    { name: "bottom", x: 0, y: 2048, width: 1000, height: 960 },
+  ]
+  const after = reflowAfterResize(before, "top", 1000, 2048, 1000, 2560)
+  equal(after.find((t) => t.name === "bottom").y, 2560, "vertical growth pushes the tile below down")
+}
+
+// No size change is a no-op, not a needless rebuild of every tile.
+{
+  const before = [
+    { name: "a", x: 0, y: 0, width: 100, height: 100 },
+    { name: "b", x: 100, y: 0, width: 50, height: 50 },
+  ]
+  const after = reflowAfterResize(before, "a", 100, 100, 100, 100)
+  equal(after, before, "identical size is a no-op")
+}
+
 // --- overlap detection -----------------------------------------------------
 
 check(anyOverlap([anchor, { name: "b", x: 100, y: 100, width: 500, height: 500 }]), "overlap detected")

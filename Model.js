@@ -156,6 +156,38 @@ function attach(tile, others, alignThreshold) {
   return { x: Math.round(best.x), y: Math.round(best.y) }
 }
 
+// Changing one display's mode/scale changes its logical footprint, and
+// nothing else in the layout knows to move. A display that was sitting flush
+// against its right edge is now either overlapped (footprint grew) or
+// separated by a gap (footprint shrank). Reflow shifts every other enabled,
+// non-mirrored tile that was positioned at or beyond the resized tile's old
+// edge, by the same delta, along each axis independently -- so a row (or
+// column) of displays keeps its flush arrangement across a scale or
+// resolution change instead of the user hitting an "overlap" rejection for a
+// change they didn't make.
+function reflowAfterResize(tiles, name, oldWidth, oldHeight, newWidth, newHeight) {
+  var anchor = null
+  for (var i = 0; i < tiles.length; i++) {
+    if (tiles[i].name === name) { anchor = tiles[i]; break }
+  }
+  if (!anchor) return tiles.slice()
+
+  var deltaW = newWidth - oldWidth
+  var deltaH = newHeight - oldHeight
+  if (deltaW === 0 && deltaH === 0) return tiles.slice()
+
+  var oldRight = anchor.x + oldWidth
+  var oldBottom = anchor.y + oldHeight
+
+  return tiles.map(function(tile) {
+    if (tile.name === name || tile.disabled || tile.mirror) return tile
+    var copy = Object.assign({}, tile)
+    if (deltaW !== 0 && tile.x >= oldRight) copy.x = tile.x + deltaW
+    if (deltaH !== 0 && tile.y >= oldBottom) copy.y = tile.y + deltaH
+    return copy
+  })
+}
+
 function overlaps(a, b) {
   return a.x < b.x + b.width && a.x + a.width > b.x
       && a.y < b.y + b.height && a.y + a.height > b.y

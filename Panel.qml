@@ -101,19 +101,51 @@ Panel {
   // Rules must be complete: Hyprland replaces a same-named rule rather than
   // merging with it, so a field left out would fall back to its default.
   function layoutWith(name, changes) {
-    var layout = []
-    for (var i = 0; i < root.outputs.length; i++) {
-      var display = root.outputs[i]
-      var rule = {
-        output: display.name,
-        mode: display.mode || "preferred",
-        position: display.position,
-        scale: display.scale,
-        transform: display.transform
+    // A resolution or scale change on `name` can change its logical
+    // footprint. Left alone, a neighbor that was sitting flush against it
+    // either now overlaps it (footprint grew) or is left with a gap
+    // (footprint shrank) -- and the apply gets rejected as an overlap for an
+    // edit the user never touched. Reflow the current positions first, in
+    // logical space, using the edited display's old and new footprint; every
+    // other field on every other display is left exactly as it is.
+    var edited = null
+    for (var i = 0; i < root.outputs.length; i++)
+      if (root.outputs[i].name === name) { edited = root.outputs[i]; break }
+
+    var tiles = root.outputs.map(function(display) {
+      var size = Model.logicalSize(display.mode, display.scale, display.transform)
+      return {
+        name: display.name, x: display.x, y: display.y,
+        width: size.width, height: size.height,
+        disabled: display.disabled, mirror: display.mirror
       }
-      if (display.mirror) rule.mirror = display.mirror
-      if (display.disabled) rule.disabled = true
-      if (display.name === name)
+    })
+
+    var positions = tiles
+    if (edited) {
+      var oldSize = Model.logicalSize(edited.mode, edited.scale, edited.transform)
+      var newMode = changes.mode !== undefined ? changes.mode : edited.mode
+      var newScale = changes.scale !== undefined ? changes.scale : edited.scale
+      var newTransform = changes.transform !== undefined ? changes.transform : edited.transform
+      var newSize = Model.logicalSize(newMode, newScale, newTransform)
+      positions = Model.reflowAfterResize(
+        tiles, name, oldSize.width, oldSize.height, newSize.width, newSize.height)
+    }
+
+    var layout = []
+    for (var j = 0; j < root.outputs.length; j++) {
+      var display2 = root.outputs[j]
+      var position = positions.filter(function(t) { return t.name === display2.name })[0]
+      var rule = {
+        output: display2.name,
+        mode: display2.mode || "preferred",
+        position: Math.round(position.x) + "x" + Math.round(position.y),
+        scale: display2.scale,
+        transform: display2.transform
+      }
+      if (display2.mirror) rule.mirror = display2.mirror
+      if (display2.disabled) rule.disabled = true
+      if (display2.name === name)
         for (var key in changes) rule[key] = changes[key]
       layout.push(rule)
     }
