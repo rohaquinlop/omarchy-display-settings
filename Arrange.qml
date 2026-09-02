@@ -24,6 +24,7 @@ Item {
   // Working copy: {name, x, y, width, height, disabled, mode, scale, transform, mirror}
   property var tiles: []
   property string selectedName: ""
+  property string primaryName: ""
   // How close a drop must be to a clean alignment before it takes it.
   // Screen pixels; divided by the canvas factor to reach logical space.
   property int alignThreshold: 40
@@ -235,6 +236,18 @@ Item {
               : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
             radius: Style.cornerRadius
             opacity: tileData.disabled ? 0.4 : 1.0
+
+            // The primary display wears a menubar-style strip, the way macOS
+            // marks it — quieter than a label and readable at tile size.
+            Rectangle {
+              visible: root.primaryName === tile.tileData.name
+              anchors { top: parent.top; left: parent.left; right: parent.right }
+              anchors.margins: 2
+              height: Math.max(3, parent.height * 0.06)
+              radius: height / 2
+              color: Color.accent
+              opacity: 0.9
+            }
 
             Column {
               anchors.centerIn: parent

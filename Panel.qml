@@ -31,6 +31,9 @@ Panel {
   property var outputs: []
   property var configInfo: ({})
   property string selectedName: ""
+  // Hyprland has no primary flag; the engine composes it from
+  // cursor:default_monitor plus the home of workspace 1.
+  property string primaryName: ""
   property bool busy: false
   property string lastError: ""
 
@@ -117,14 +120,15 @@ Panel {
     return layout
   }
 
-  function preview(layout) {
+  function preview(layout, primary) {
     if (root.busy || applyProc.running) return
     root.busy = true
     root.lastError = ""
     // The payload rides on argv, not stdin. Over stdin the engine blocks in
     // json.load until the pipe closes, and a missed close would leave `busy`
     // latched true — silently swallowing every later click.
-    applyProc.command = [root.engine, "apply", JSON.stringify({ layout: layout })]
+    applyProc.command = [root.engine, "apply",
+      JSON.stringify({ layout: layout, primary: primary || root.primaryName })]
     applyProc.running = true
   }
 
@@ -147,6 +151,11 @@ Panel {
     // Refuse to turn off the last display rather than let the backend reject it.
     if (!display.disabled && root.enabledCount <= 1) return
     root.preview(root.layoutWith(display.name, { disabled: !display.disabled }))
+  }
+
+  function setPrimary(name) {
+    if (name === root.primaryName) return
+    root.preview(root.layoutWith("", {}), name)
   }
 
   function keepChanges() {
@@ -176,6 +185,7 @@ Panel {
           var parsed = JSON.parse(String(text || "{}"))
           root.outputs = parsed.outputs || []
           root.configInfo = parsed.config || ({})
+          root.primaryName = String(parsed.primary || "")
           // A revert armed by an earlier preview keeps running whether or not
           // this panel is open. Pick the countdown back up rather than let the
           // display change back with no explanation on screen.
@@ -608,6 +618,36 @@ Panel {
 
           PanelSeparator { width: parent.width }
 
+          // ---------- primary display ----------
+          Column {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.outputs.length > 1
+
+            PanelSectionHeader { text: "PRIMARY DISPLAY" }
+
+            Dropdown {
+              width: parent.width
+              showLabel: false
+              value: root.primaryName
+              options: root.outputs.map(function(display) {
+                return { value: display.name, label: display.name }
+              })
+              onChanged: function(value) { root.setPrimary(value) }
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              text: "The pointer starts here, and workspace 1 lives here."
+              color: root.bar ? root.bar.foreground : Color.foreground
+              opacity: 0.55
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+          }
+
           // ---------- displays ----------
           Column {
             width: parent.width
@@ -627,6 +667,7 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   textFormat: Text.PlainText
                   text: "󰍹  " + modelData.name
+                    + (root.primaryName === modelData.name ? "  ★" : "")
                     + (modelData.managedElsewhere ? "  · managed elsewhere" : "")
                   color: root.bar ? root.bar.foreground : Color.foreground
                   opacity: modelData.disabled ? 0.45 : 1.0
@@ -727,6 +768,7 @@ Panel {
     active: false
     sourceComponent: Arrange {
       bar: root.bar
+      primaryName: root.primaryName
       onClosed: Qt.callLater(function() { arrangeLoader.active = false })
       previewing: root.previewing
       secondsRemaining: root.secondsRemaining

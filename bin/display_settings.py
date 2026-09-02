@@ -74,6 +74,11 @@ REFRESH_TOLERANCE = 0.5
 SETTLE_TIMEOUT = 3.0
 SETTLE_INTERVAL = 0.1
 
+# Hyprland has no primary-monitor flag. "Primary" is composed from the two
+# settings that make a display feel primary in daily use: where the pointer
+# starts, and which display owns workspace 1.
+PRIMARY_WORKSPACE = "1"
+
 REVERT_UNIT = "omarchy-display-settings-revert"
 REVERT_SECONDS = 15
 
@@ -488,7 +493,26 @@ def render_comment(rule: dict[str, Any], density: dict[str, Any] | None) -> str 
     return "-- " + " · ".join(b for b in bits if b)
 
 
-def render_block(rules: list[dict[str, Any]], densities: dict[str, dict[str, Any]]) -> str:
+def render_primary(name: str) -> list[str]:
+    """The two calls that make a display primary, or nothing when unset."""
+    if not name:
+        return []
+    validate_field("output", name)
+    return [
+        "",
+        "-- Primary display: where the pointer starts, and the home of workspace "
+        + PRIMARY_WORKSPACE + ".",
+        'hl.config({ cursor = { default_monitor = "' + name + '" } })',
+        'hl.workspace_rule({ workspace = "' + PRIMARY_WORKSPACE + '", monitor = "'
+        + name + '", default = true })',
+    ]
+
+
+def render_block(
+    rules: list[dict[str, Any]],
+    densities: dict[str, dict[str, Any]],
+    primary: str = "",
+) -> str:
     """The full managed block.
 
     Outputs are sorted by name and fields follow FIELD_ORDER, so re-running
@@ -500,6 +524,7 @@ def render_block(rules: list[dict[str, Any]], densities: dict[str, dict[str, Any
         if comment:
             lines.append(comment)
         lines.append(render_rule(rule))
+    lines.extend(render_primary(primary))
     lines.append(BLOCK_END)
     return "\n".join(lines)
 
@@ -697,6 +722,7 @@ def write_config(
     rules: list[dict[str, Any]],
     densities: dict[str, dict[str, Any]],
     do_import: bool = True,
+    primary: str = "",
 ) -> dict[str, Any]:
     """Write the managed block, importing any hand-written rules it supersedes."""
     target = os.path.realpath(path)
@@ -713,7 +739,7 @@ def write_config(
         text, imported = import_existing(text, outputs)
 
     before, _, after = split_block(text)
-    block = render_block(rules, densities)
+    block = render_block(rules, densities, primary)
 
     body = (before.rstrip("\n") + "\n\n") if before.strip() else ""
     tail = after.strip("\n")
@@ -753,6 +779,33 @@ def hypr_monitors() -> list[dict[str, Any]]:
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"hyprctl returned invalid JSON: {exc}") from exc
     return data if isinstance(data, list) else []
+
+
+def current_primary() -> str:
+    """The display Hyprland starts the pointer on, or "" when unset."""
+    code, out, _ = run(["hyprctl", "getoption", "cursor:default_monitor", "-j"])
+    if code != 0:
+        return ""
+    try:
+        return str(json.loads(out).get("str") or "").strip()
+    except (json.JSONDecodeError, AttributeError):
+        return ""
+
+
+def apply_primary(name: str) -> tuple[bool, str]:
+    """Make one display primary at runtime, mirroring what the block persists."""
+    if not name:
+        return True, ""
+    validate_field("output", name)
+    for lua in (
+        'hl.config({ cursor = { default_monitor = "' + name + '" } })',
+        'hl.workspace_rule({ workspace = "' + PRIMARY_WORKSPACE + '", monitor = "'
+        + name + '", default = true })',
+    ):
+        code, out, err = run(["hyprctl", "eval", lua])
+        if code != 0 or "error" in (out or "").lower():
+            return False, (err or out or "").strip()
+    return True, ""
 
 
 def apply_rule(rule: dict[str, Any]) -> tuple[bool, str]:
@@ -855,6 +908,7 @@ def read_state() -> dict[str, Any]:
         },
         "pending": read_pending(),
         "pendingSeconds": pending_seconds_remaining(),
+        "primary": current_primary(),
     }
 
 
@@ -1103,7 +1157,7 @@ def verify_once(layout: list[dict[str, Any]]) -> list[str]:
     return problems
 
 
-def apply_layout(layout: list[dict[str, Any]]) -> dict[str, Any]:
+def apply_layout(layout: list[dict[str, Any]], primary: str = "") -> dict[str, Any]:
     problems = validate_layout(layout)
     if problems:
         return {"ok": False, "stage": "validate", "problems": problems}
@@ -1115,16 +1169,29 @@ def apply_layout(layout: list[dict[str, Any]]) -> dict[str, Any]:
     # already-previewed state, so the timer "restored" a value the user had
     # never accepted — the display appeared to bounce between two settings.
     # The first unconfirmed layout is the one to come back to.
+    if primary:
+        names = {str(rule.get("output", "")) for rule in layout}
+        if primary not in names:
+            return {
+                "ok": False,
+                "stage": "validate",
+                "problems": [primary + " is not one of the displays in this layout"],
+            }
+
     existing = read_pending()
     previous = existing["layout"] if existing and existing.get("layout") else current_layout()
-    write_pending({"layout": previous, "expiresAt": time.time() + REVERT_SECONDS})
+    write_pending({
+        "layout": previous,
+        "primary": current_primary(),
+        "expiresAt": time.time() + REVERT_SECONDS,
+    })
     armed = arm_revert()
 
     def abandon(stage: str, problems: list[str]) -> dict[str, Any]:
         # We restored here and now, so the armed revert has nothing left to do.
         # Leaving it running would fire a redundant restore later and leave a
         # stale pending file behind to confuse the next apply.
-        restore(previous)
+        restore(previous, (existing or {}).get("primary"))
         stop_revert_unit()
         clear_pending()
         return {"ok": False, "stage": stage, "problems": problems, "reverted": True}
@@ -1141,12 +1208,17 @@ def apply_layout(layout: list[dict[str, Any]]) -> dict[str, Any]:
     if problems:
         return abandon("verify", problems)
 
+    ok, message = apply_primary(primary)
+    if not ok:
+        return abandon("primary", ["could not set primary display: " + message])
+
     return {
         "ok": True,
         "stage": "preview",
         "armed": armed,
         "secondsRemaining": REVERT_SECONDS,
         "layout": layout,
+        "primary": primary,
     }
 
 
@@ -1158,9 +1230,11 @@ def pending_seconds_remaining() -> int:
     return max(0, int(round(float(pending["expiresAt"]) - time.time())))
 
 
-def restore(layout: list[dict[str, Any]]) -> None:
+def restore(layout: list[dict[str, Any]], primary: str | None = None) -> None:
     for rule in layout:
         apply_rule(rule)
+    if primary:
+        apply_primary(primary)
 
 
 def cmd_revert(path: str | None = None) -> dict[str, Any]:
@@ -1169,7 +1243,7 @@ def cmd_revert(path: str | None = None) -> dict[str, Any]:
     pending = read_pending(path)
     restored = False
     if pending:
-        restore(pending.get("layout", []))
+        restore(pending.get("layout", []), pending.get("primary"))
         clear_pending(path)
         restored = True
     stop_revert_unit()
@@ -1191,18 +1265,23 @@ def cmd_confirm() -> dict[str, Any]:
     stop_revert_unit()
     state = read_state()
     layout = current_layout()
-    result = write_config(config_path(), layout, densities_for(state["outputs"]))
+    result = write_config(
+        config_path(), layout, densities_for(state["outputs"]), primary=current_primary()
+    )
     clear_pending()
     return {"ok": True, **result}
 
 
-def cmd_persist(layout: list[dict[str, Any]]) -> dict[str, Any]:
+def cmd_persist(layout: list[dict[str, Any]], primary: str = "") -> dict[str, Any]:
     problems = validate_layout(layout)
     if problems:
         return {"ok": False, "problems": problems}
     state = read_state()
     result = write_config(
-        config_path(), normalize_positions(layout), densities_for(state["outputs"])
+        config_path(),
+        normalize_positions(layout),
+        densities_for(state["outputs"]),
+        primary=primary or current_primary(),
     )
     return {"ok": True, **result}
 
@@ -1231,7 +1310,7 @@ def cmd_advise() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def load_layout(source: str) -> list[dict[str, Any]]:
+def load_layout(source: str) -> tuple[list[dict[str, Any]], str]:
     """Read a layout from inline JSON, a file path, or stdin ("-").
 
     Inline JSON is what the QML side uses. Passing it through stdin instead
@@ -1247,11 +1326,13 @@ def load_layout(source: str) -> list[dict[str, Any]]:
     else:
         with open(source, encoding="utf-8") as handle:
             data = json.load(handle)
+    primary = ""
     if isinstance(data, dict):
+        primary = str(data.get("primary") or "")
         data = data.get("layout", [])
     if not isinstance(data, list):
         raise ValueError("layout must be a JSON array of rules")
-    return data
+    return data, primary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1278,9 +1359,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "advise":
             result = cmd_advise()
         elif args.command == "apply":
-            result = apply_layout(load_layout(args.layout))
+            result = apply_layout(*load_layout(args.layout))
         elif args.command == "persist":
-            result = cmd_persist(load_layout(args.layout))
+            result = cmd_persist(*load_layout(args.layout))
         elif args.command == "confirm":
             result = cmd_confirm()
         elif args.command == "revert":

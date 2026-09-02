@@ -597,6 +597,54 @@ class VerifyTests(unittest.TestCase):
             ds.render_rule(rule)
 
 
+class PrimaryDisplayTests(unittest.TestCase):
+    """Hyprland has no primary flag; it is composed from two settings."""
+
+    def test_block_carries_both_primary_calls(self):
+        block = ds.render_block(
+            [{"output": "eDP-1", "mode": "1920x1200@60", "position": "0x0", "scale": 1}],
+            {},
+            "eDP-1",
+        )
+        self.assertIn('hl.config({ cursor = { default_monitor = "eDP-1" } })', block)
+        self.assertIn('hl.workspace_rule({ workspace = "1", monitor = "eDP-1"', block)
+
+    def test_no_primary_writes_nothing_extra(self):
+        block = ds.render_block(
+            [{"output": "eDP-1", "mode": "1920x1200@60", "position": "0x0", "scale": 1}], {}, ""
+        )
+        self.assertNotIn("cursor", block)
+        self.assertNotIn("workspace_rule", block)
+
+    def test_primary_is_validated_like_any_output_name(self):
+        with self.assertRaises(ds.ValidationError):
+            ds.render_primary('x"}) os.execute("rm -rf /") --')
+
+    def test_primary_survives_a_rewrite_unchanged(self):
+        import tempfile as tf
+
+        with tf.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "monitors.lua")
+            rules = [{"output": "eDP-1", "mode": "1920x1200@60", "position": "0x0", "scale": 1}]
+            ds.write_config(path, rules, {}, primary="eDP-1")
+            with open(path, encoding="utf-8") as handle:
+                first = handle.read()
+            ds.write_config(path, rules, {}, primary="eDP-1")
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(first, handle.read())
+
+    def test_payload_carries_primary(self):
+        layout, primary = ds.load_layout(
+            '{"layout":[{"output":"eDP-1","mode":"1920x1200@60.00"}],"primary":"eDP-1"}'
+        )
+        self.assertEqual(primary, "eDP-1")
+        self.assertEqual(len(layout), 1)
+
+    def test_payload_without_primary_is_empty_string(self):
+        _, primary = ds.load_layout('[{"output":"eDP-1","mode":"1920x1200@60.00"}]')
+        self.assertEqual(primary, "")
+
+
 class ApplyStateMachineTests(unittest.TestCase):
     """apply -> verify -> revert, with hyprctl and systemd fully stubbed."""
 
