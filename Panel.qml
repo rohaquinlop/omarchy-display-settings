@@ -57,8 +57,18 @@ Panel {
   }
 
   function refresh() {
+    root.readStockRows()
     if (readProc.running) return
     readProc.running = true
+  }
+
+  // Brightness and text size come from Omarchy's own commands. They used to be
+  // fetched only by a repeating timer, which does not fire until its first
+  // interval has elapsed — so the brightness row stayed hidden and the text
+  // size slider sat on its default for five seconds after every open.
+  function readStockRows() {
+    if (!stateProc.running) stateProc.running = true
+    if (!textSizeProc.running) textSizeProc.running = true
   }
 
   function selectedResolution() {
@@ -239,6 +249,19 @@ Panel {
     command: []
   }
 
+  Process {
+    id: textSizeProc
+    command: ["omarchy-display-text-size"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        // "text size: 12 px", or "text size: 12 (default) px" when unset.
+        var match = String(text || "").match(/text size:\s*(\d+)/)
+        if (match) root.textSizePx = parseInt(match[1], 10)
+      }
+    }
+  }
+
   // ---- stock rows: same commands the built-in Display panel calls ----------
 
   Process {
@@ -288,7 +311,8 @@ Panel {
     interval: 5000
     repeat: true
     running: root.opened
-    onTriggered: stateProc.running = true
+    triggeredOnStart: true
+    onTriggered: root.readStockRows()
   }
 
   BarIconButton {
