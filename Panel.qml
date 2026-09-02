@@ -649,6 +649,11 @@ Panel {
           }
 
           // ---------- displays ----------
+          //
+          // The row selects; only the power icon turns a display off. Making the
+          // whole row a toggle meant a misclick while picking which display to
+          // configure blanked a screen instead — destructive, and on the exact
+          // target you reach for most often.
           Column {
             width: parent.width
             spacing: Style.space(4)
@@ -657,69 +662,89 @@ Panel {
 
             Repeater {
               model: root.outputs
-              delegate: Item {
+              delegate: Rectangle {
+                id: displayRow
                 required property var modelData
                 width: column.width
-                implicitHeight: Style.space(26)
+                implicitHeight: Style.space(28)
+                radius: Style.cornerRadius
+                color: root.selectedName === modelData.name
+                  ? Qt.rgba(root.bar ? root.bar.foreground.r : 1,
+                            root.bar ? root.bar.foreground.g : 1,
+                            root.bar ? root.bar.foreground.b : 1, 0.07)
+                  : "transparent"
 
-                Text {
-                  anchors.left: parent.left
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  text: "󰍹  " + modelData.name
-                    + (root.primaryName === modelData.name ? "  ★" : "")
-                    + (modelData.managedElsewhere ? "  · managed elsewhere" : "")
-                  color: root.bar ? root.bar.foreground : Color.foreground
-                  opacity: modelData.disabled ? 0.45 : 1.0
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.body
-                }
-
-                // Clicking the star makes this display primary; clicking the
-                // row toggles it on or off.
-                Text {
-                  id: primaryStar
-                  anchors.right: enabledMark.left
-                  anchors.rightMargin: Style.space(10)
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  visible: root.outputs.length > 1 && !modelData.disabled
-                  text: root.primaryName === modelData.name ? "★" : "☆"
-                  color: root.bar ? root.bar.foreground : Color.foreground
-                  opacity: root.primaryName === modelData.name ? 1.0 : 0.35
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.body
-
-                  MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -Style.space(4)
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.setPrimary(modelData.name)
-                  }
-                }
-
-                Text {
-                  id: enabledMark
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  textFormat: Text.PlainText
-                  text: modelData.disabled ? "" : "󰄬"
-                  color: root.bar ? root.bar.foreground : Color.foreground
-                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
-                  font.pixelSize: Style.font.body
-                }
-
-                // Stops short of the star, which owns its own clicks. Filling
-                // the row would put this on top and swallow them, since later
-                // siblings win the hit test.
                 MouseArea {
                   anchors.left: parent.left
                   anchors.top: parent.top
                   anchors.bottom: parent.bottom
-                  anchors.right: primaryStar.visible ? primaryStar.left : parent.right
-                  anchors.rightMargin: Style.space(6)
+                  anchors.right: rowActions.left
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: root.toggleDisplay(modelData)
+                  onClicked: root.selectedName = displayRow.modelData.name
+                }
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(6)
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: "󰍹  " + displayRow.modelData.name
+                    + (displayRow.modelData.managedElsewhere ? "  · managed elsewhere" : "")
+                    + (displayRow.modelData.disabled ? "  · off" : "")
+                  color: root.bar ? root.bar.foreground : Color.foreground
+                  opacity: displayRow.modelData.disabled ? 0.45 : 1.0
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.body
+                }
+
+                Row {
+                  id: rowActions
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(6)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(12)
+
+                  // Set primary.
+                  Text {
+                    textFormat: Text.PlainText
+                    visible: root.outputs.length > 1 && !displayRow.modelData.disabled
+                    text: root.primaryName === displayRow.modelData.name ? "★" : "☆"
+                    color: root.bar ? root.bar.foreground : Color.foreground
+                    opacity: root.primaryName === displayRow.modelData.name ? 1.0 : 0.35
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.body
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    MouseArea {
+                      anchors.fill: parent
+                      anchors.margins: -Style.space(5)
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.setPrimary(displayRow.modelData.name)
+                    }
+                  }
+
+                  // Turn the display on or off. Deliberately its own small
+                  // target, and inert for the last display left on.
+                  Text {
+                    textFormat: Text.PlainText
+                    text: "⏻"
+                    color: root.bar ? root.bar.foreground : Color.foreground
+                    opacity: {
+                      if (!displayRow.modelData.disabled && root.enabledCount <= 1) return 0.2
+                      return displayRow.modelData.disabled ? 0.35 : 0.9
+                    }
+                    font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                    font.pixelSize: Style.font.body
+                    anchors.verticalCenter: parent.verticalCenter
+
+                    MouseArea {
+                      anchors.fill: parent
+                      anchors.margins: -Style.space(5)
+                      enabled: displayRow.modelData.disabled || root.enabledCount > 1
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: root.toggleDisplay(displayRow.modelData)
+                    }
+                  }
                 }
               }
             }
