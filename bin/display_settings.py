@@ -917,6 +917,103 @@ def read_state() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def rule_box(rule: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    """The rule's (x, y, width, height) in logical space, or None when it
+    is disabled, mirrored, or its position/mode cannot be pinned down
+    (e.g. "auto", used when re-enabling a display and letting Hyprland
+    place it)."""
+    if rule.get("disabled") or rule.get("mirror"):
+        return None
+    parts = parse_mode(str(rule.get("mode", "")))
+    if not parts:
+        return None
+    position = str(rule.get("position", "0x0"))
+    if not POSITION_RE.match(position):
+        return None
+    index = position.rindex("x")
+    try:
+        x, y = int(position[:index]), int(position[index + 1 :])
+    except ValueError:
+        return None
+    width, height = logical_size(
+        parts[0], parts[1], float(rule.get("scale", 1) or 1), int(rule.get("transform", 0) or 0)
+    )
+    return x, y, width, height
+
+
+def boxes_overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by
+
+
+def order_for_safe_apply(layout: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sequence rules so no intermediate hyprctl eval creates an overlap.
+
+    Rules are applied one at a time. A resize that grows a display into space
+    still occupied by a neighbor's *old* position momentarily overlaps, even
+    though the final layout -- once every rule has landed -- does not. Hyprland
+    runs its own compositor-level overlap check after each change and surfaces
+    a native warning for that intermediate state, for an apply that is
+    otherwise fine.
+
+    A rule is safe to apply next once its new box does not overlap any other
+    output's *current* box -- old (live) if that output has not been applied
+    yet in this pass, new if it has. Repeatedly apply whatever is currently
+    safe. A rule with no determinable box (disabled, mirrored, or "auto" --
+    typically a display being re-enabled with no meaningful old position) is
+    always safe, since where it lands is up to Hyprland and cannot be reasoned
+    about here. If nothing is safe -- two outputs trading positions with each
+    other, say -- apply the remainder in their given order; the final state is
+    validated separately regardless, and a transient warning in a case like
+    that is unavoidable.
+    """
+    live = {str(m.get("name", "")): m for m in hypr_monitors()}
+
+    def live_box(name: str) -> tuple[int, int, int, int] | None:
+        monitor = live.get(name)
+        if not monitor or monitor.get("disabled"):
+            return None
+        width, height = logical_size(
+            int(monitor.get("width") or 0),
+            int(monitor.get("height") or 0),
+            float(monitor.get("scale") or 1),
+            int(monitor.get("transform") or 0),
+        )
+        return int(monitor.get("x") or 0), int(monitor.get("y") or 0), width, height
+
+    current = {str(rule.get("output", "")): live_box(str(rule.get("output", ""))) for rule in layout}
+
+    remaining = list(layout)
+    ordered: list[dict[str, Any]] = []
+
+    while remaining:
+        chosen = None
+        for rule in remaining:
+            name = str(rule.get("output", ""))
+            new_box = rule_box(rule)
+            if new_box is None:
+                chosen = rule
+                break
+            if not any(
+                boxes_overlap(new_box, other_box)
+                for other_name, other_box in current.items()
+                if other_name != name and other_box is not None
+            ):
+                chosen = rule
+                break
+
+        if chosen is None:
+            ordered.extend(remaining)
+            break
+
+        ordered.append(chosen)
+        remaining.remove(chosen)
+        current[str(chosen.get("output", ""))] = rule_box(chosen)
+
+    return ordered
+
+
 def validate_layout(layout: list[dict[str, Any]]) -> list[str]:
     """Reasons this layout must not be applied. Empty means it is fine."""
     problems: list[str] = []
@@ -930,31 +1027,17 @@ def validate_layout(layout: list[dict[str, Any]]) -> list[str]:
         if mirror and str(mirror) not in names:
             problems.append(f"{rule.get('output')} mirrors {mirror}, which is not connected")
 
-    boxes = []
-    for rule in enabled:
-        if rule.get("mirror"):
-            continue
-        parts = parse_mode(str(rule.get("mode", "")))
-        if not parts:
-            continue
-        position = str(rule.get("position", "0x0"))
-        if not POSITION_RE.match(position):
-            continue
-        x_text, y_text = position.split("x", 1) if position.count("x") == 1 else (position[: position.rindex("x")], position[position.rindex("x") + 1 :])
-        try:
-            x, y = int(x_text), int(y_text)
-        except ValueError:
-            continue
-        width, height = logical_size(
-            parts[0], parts[1], float(rule.get("scale", 1) or 1), int(rule.get("transform", 0) or 0)
-        )
-        boxes.append((str(rule.get("output", "")), x, y, width, height))
-
+    boxes = [
+        (str(rule.get("output", "")), box)
+        for rule in enabled
+        if (box := rule_box(rule)) is not None
+    ]
     for i in range(len(boxes)):
         for j in range(i + 1, len(boxes)):
-            a, b = boxes[i], boxes[j]
-            if a[1] < b[1] + b[3] and a[1] + a[3] > b[1] and a[2] < b[2] + b[4] and a[2] + a[4] > b[2]:
-                problems.append(f"{a[0]} and {b[0]} overlap")
+            name_a, box_a = boxes[i]
+            name_b, box_b = boxes[j]
+            if boxes_overlap(box_a, box_b):
+                problems.append(f"{name_a} and {name_b} overlap")
     return problems
 
 
@@ -1197,7 +1280,7 @@ def apply_layout(layout: list[dict[str, Any]], primary: str = "") -> dict[str, A
         return {"ok": False, "stage": stage, "problems": problems, "reverted": True}
 
     failures = []
-    for rule in layout:
+    for rule in order_for_safe_apply(layout):
         ok, message = apply_rule(rule)
         if not ok:
             failures.append(f"{rule.get('output')}: {message}")

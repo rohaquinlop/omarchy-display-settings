@@ -668,6 +668,94 @@ class PrimaryDisplayTests(unittest.TestCase):
         self.assertEqual(primary, "")
 
 
+class SafeApplyOrderTests(unittest.TestCase):
+    """Reordering rules so an intermediate hyprctl eval never overlaps.
+
+    Applying rules one at a time, in an arbitrary order, can create a
+    transient overlap even when the final layout does not have one: growing
+    a display into space its neighbor's *old* position still occupies. This
+    reproduces the exact scenario reported live -- lowering an external
+    monitor's scale, growing it into the internal panel's old position --
+    where Hyprland's own compositor-level overlap check fired on that
+    intermediate state.
+    """
+
+    def setUp(self):
+        self.original = ds.hypr_monitors
+        self.addCleanup(lambda: setattr(ds, "hypr_monitors", self.original))
+
+    def use(self, records):
+        ds.hypr_monitors = lambda: records
+
+    def side_by_side(self, left_width, right_x):
+        """Two 1200-tall outputs at scale 1, left flush against the right one."""
+        return [
+            {"name": "HDMI-A-1", "x": 0, "y": 0, "width": left_width, "height": 1200,
+             "scale": 1, "transform": 0, "disabled": False},
+            {"name": "eDP-1", "x": right_x, "y": 0, "width": 1536, "height": 1200,
+             "scale": 1, "transform": 0, "disabled": False},
+        ]
+
+    def test_growing_display_moves_its_neighbor_out_of_the_way_first(self):
+        # This is the scenario reported live: HDMI-A-1 flush at width 2048,
+        # eDP-1 starting right where it ends. Growing HDMI-A-1 to 2560 would
+        # overlap eDP-1's old position if HDMI-A-1's rule landed first.
+        self.use(self.side_by_side(left_width=2048, right_x=2048))
+        layout = [
+            {"output": "HDMI-A-1", "mode": "2560x1200@60.00", "position": "0x0", "scale": 1},
+            {"output": "eDP-1", "mode": "1536x1200@60.00", "position": "2560x0", "scale": 1},
+        ]
+        ordered = ds.order_for_safe_apply(layout)
+        self.assertEqual([r["output"] for r in ordered], ["eDP-1", "HDMI-A-1"])
+
+    def test_shrinking_display_applies_before_its_neighbor_moves_in(self):
+        # The reverse: HDMI-A-1 shrinking from 2560 to 2048 must land first,
+        # opening the gap, before eDP-1 moves in to close it.
+        self.use(self.side_by_side(left_width=2560, right_x=2560))
+        layout = [
+            {"output": "HDMI-A-1", "mode": "2048x1200@60.00", "position": "0x0", "scale": 1},
+            {"output": "eDP-1", "mode": "1536x1200@60.00", "position": "2048x0", "scale": 1},
+        ]
+        ordered = ds.order_for_safe_apply(layout)
+        self.assertEqual([r["output"] for r in ordered], ["HDMI-A-1", "eDP-1"])
+
+    def test_unrelated_rules_keep_their_order(self):
+        # Neither rule's new box conflicts with anything, so the first safe
+        # candidate in the given order wins -- no reason to reshuffle.
+        self.use(self.side_by_side(left_width=2048, right_x=2048))
+        layout = [
+            {"output": "HDMI-A-1", "mode": "2048x1200@60.00", "position": "0x0", "scale": 1},
+            {"output": "eDP-1", "mode": "1536x1200@60.00", "position": "2048x0", "scale": 1},
+        ]
+        ordered = ds.order_for_safe_apply(layout)
+        self.assertEqual([r["output"] for r in ordered], ["HDMI-A-1", "eDP-1"])
+
+    def test_a_rule_with_no_determinable_box_is_always_safe(self):
+        # Re-enabling a display sends position "auto"; there is nothing to
+        # reason about, so it must never block on anything.
+        self.use(monitors("monitors_disabled.json"))
+        layout = [
+            {"output": "eDP-1", "mode": "1920x1200@60.00", "position": "0x0", "scale": 1.25},
+            {"output": "HDMI-A-1", "mode": "preferred", "position": "auto", "disabled": False},
+        ]
+        ordered = ds.order_for_safe_apply(layout)
+        self.assertEqual({r["output"] for r in ordered}, {"eDP-1", "HDMI-A-1"})
+
+    def test_no_infinite_loop_when_two_outputs_trade_places(self):
+        self.use([
+            {"name": "A", "x": 0, "y": 0, "width": 1000, "height": 1000,
+             "scale": 1, "transform": 0, "disabled": False},
+            {"name": "B", "x": 1000, "y": 0, "width": 1000, "height": 1000,
+             "scale": 1, "transform": 0, "disabled": False},
+        ])
+        layout = [
+            {"output": "A", "mode": "1000x1000@60.00", "position": "1000x0", "scale": 1},
+            {"output": "B", "mode": "1000x1000@60.00", "position": "0x0", "scale": 1},
+        ]
+        ordered = ds.order_for_safe_apply(layout)
+        self.assertEqual(len(ordered), 2)
+
+
 class ApplyStateMachineTests(unittest.TestCase):
     """apply -> verify -> revert, with hyprctl and systemd fully stubbed."""
 
