@@ -37,8 +37,9 @@ omarchy plugin remove rohaquinlop.display-settings
 - **Advanced**: `transform`, `vrr`, `mirror`, `bitdepth`, `cm`, `icc`,
   `supports_hdr`, the `sdr*` fields, plus a raw key/value escape hatch for any
   documented `HL.MonitorSpec` field this build has no control for.
-- **A 15-second revert.** Every change previews first and rolls back unless you
-  confirm.
+- **A 15-second revert**, with a floating Keep/Revert dialog — the same
+  pattern macOS and Windows use after a display change — that appears on its
+  own the moment a change is applied, whether or not the panel is open.
 
 ## Why the config file matters
 
@@ -113,7 +114,8 @@ and nothing runs as root.
 ## Development
 
 ```bash
-python3 -m unittest discover tests   # 99 tests, no compositor needed
+python3 -m unittest discover tests   # 119 tests, no compositor needed
+node tests/model.test.js             # 73 checks on the QML-side geometry helpers
 ./tests/qmllint.sh                   # QML lint against the accepted baseline
 omarchy plugin validate .
 ```
@@ -131,6 +133,18 @@ If you install by hand rather than with `omarchy plugin add`, note that
 `omarchy-shell shell rescanPlugins` is asynchronous — wait a couple of seconds
 and confirm with `omarchy-shell shell listPlugins` before enabling, or the
 registry will act on a stale manifest.
+
+**A code change to `Panel.qml` is not proven working until you have restarted
+the shell.** `omarchy-shell`'s hot-reload logs `Local plugin changed,
+reloading: <id>` on every save and recompiles the component, but that does not
+reliably replace a bar widget instance that is already sitting in the bar —
+the same instance can keep running the QML it loaded at construction time
+indefinitely, silently, with no warning that anything is stale. This bit hard
+during development: a fix would deploy cleanly, tests would pass, the file on
+disk would be correct, and the running panel would still exhibit the old bug,
+because the click was landing on an object built before the fix existed.
+`omarchy-restart-shell` forces a genuinely fresh instance. Trust a fix only
+after that, not after a reload log line.
 
 The engine (`bin/display_settings.py`) is stdlib-only and holds all the
 parsing, validation, and writing; the QML is presentation. Everything risky —

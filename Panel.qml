@@ -456,26 +456,26 @@ Panel {
             }
           }
 
-          // ---------- preview countdown ----------
-          Column {
+          // ---------- preview status ----------
+          //
+          // The Keep/Revert decision itself lives in the floating Confirm
+          // dialog (see the Loader near the end of this file), which shows up
+          // on its own the moment a preview is armed -- the 15-second window
+          // is easy to miss if the only way to see or act on it were to have
+          // this popup open. This is a status line only, for someone who
+          // happens to have it open at the time.
+          Row {
             width: parent.width
             spacing: Style.space(6)
             visible: root.previewing
 
-            PanelSectionHeader { text: "KEEP THESE SETTINGS?" }
-
             Text {
               textFormat: Text.PlainText
-              text: "Reverting in " + root.secondsRemaining + "s"
+              text: "Previewing — reverting in " + root.secondsRemaining + "s unless kept"
               color: root.bar ? root.bar.foreground : Color.foreground
+              opacity: 0.75
               font.family: root.bar ? root.bar.fontFamily : Style.font.family
-              font.pixelSize: Style.font.body
-            }
-
-            Row {
-              spacing: Style.space(8)
-              Button { text: "Keep"; bordered: true; onClicked: root.keepChanges() }
-              Button { text: "Revert"; bordered: true; onClicked: root.revertChanges() }
+              font.pixelSize: Style.font.caption
             }
           }
 
@@ -872,6 +872,25 @@ Panel {
       previewing: root.previewing
       secondsRemaining: root.secondsRemaining
       onApplyRequested: function(layout) { root.preview(layout) }
+      onKeepRequested: root.keepChanges()
+      onRevertRequested: root.revertChanges()
+    }
+  }
+
+  // The floating "keep these settings?" dialog, active only while a preview
+  // is pending. Bound to `previewing` rather than opened by a click, so it
+  // appears on its own the moment a change is applied -- whether or not this
+  // panel is open -- and disappears the moment it is confirmed, reverted, or
+  // times out. This is the one place the decision actually needs to be
+  // visible: 15 seconds is short, and requiring the bar popup to be open to
+  // see or act on it is the gap this exists to close.
+  Loader {
+    id: confirmLoader
+    active: root.previewing
+    sourceComponent: Confirm {
+      bar: root.bar
+      previewing: root.previewing
+      secondsRemaining: root.secondsRemaining
       onKeepRequested: root.keepChanges()
       onRevertRequested: root.revertChanges()
     }
