@@ -194,7 +194,17 @@ Item {
 
           delegate: Rectangle {
             id: tile
-            required property var modelData
+            required property int index
+
+            // Read through root.tiles[index] rather than modelData. Replacing a
+            // JS array of the same length does not reliably refresh a
+            // Repeater's modelData, so a delegate kept showing the pre-drag
+            // position while the model already held the snapped one. Reading
+            // root.tiles inside the binding makes it a real dependency, so
+            // every commit repaints.
+            readonly property var tileData: root.tiles[index] || ({
+              name: "", x: 0, y: 0, width: 0, height: 0
+            })
 
             // The model stays authoritative: position is bound to it, and a
             // drag only adds a temporary pixel offset on top. Writing x/y
@@ -204,20 +214,20 @@ Item {
             property real dragDX: 0
             property real dragDY: 0
 
-            x: canvas.offsetX + (modelData.x - canvas.origin.x) * canvas.factor + dragDX
-            y: canvas.offsetY + (modelData.y - canvas.origin.y) * canvas.factor + dragDY
-            width: Math.max(24, modelData.width * canvas.factor)
-            height: Math.max(18, modelData.height * canvas.factor)
+            x: canvas.offsetX + (tileData.x - canvas.origin.x) * canvas.factor + dragDX
+            y: canvas.offsetY + (tileData.y - canvas.origin.y) * canvas.factor + dragDY
+            width: Math.max(24, tileData.width * canvas.factor)
+            height: Math.max(18, tileData.height * canvas.factor)
 
-            color: modelData.disabled
+            color: tileData.disabled
               ? "transparent"
               : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.10)
-            border.width: root.selectedName === modelData.name ? 2 : 1
-            border.color: root.selectedName === modelData.name
+            border.width: root.selectedName === tileData.name ? 2 : 1
+            border.color: root.selectedName === tileData.name
               ? Color.accent
               : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
             radius: Style.cornerRadius
-            opacity: modelData.disabled ? 0.4 : 1.0
+            opacity: tileData.disabled ? 0.4 : 1.0
 
             Column {
               anchors.centerIn: parent
@@ -225,7 +235,7 @@ Item {
 
               Text {
                 textFormat: Text.PlainText
-                text: tile.modelData.name
+                text: tile.tileData.name
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.body
@@ -234,9 +244,9 @@ Item {
 
               Text {
                 textFormat: Text.PlainText
-                text: tile.modelData.disabled
+                text: tile.tileData.disabled
                   ? "off"
-                  : tile.modelData.width + "×" + tile.modelData.height
+                  : tile.tileData.width + "×" + tile.tileData.height
                 color: root.foreground
                 opacity: 0.6
                 font.family: root.fontFamily
@@ -256,7 +266,7 @@ Item {
               property real grabY: 0
 
               onPressed: function(mouse) {
-                root.selectedName = tile.modelData.name
+                root.selectedName = tile.tileData.name
                 var point = mapToItem(canvas, mouse.x, mouse.y)
                 grabX = point.x
                 grabY = point.y
@@ -264,19 +274,23 @@ Item {
 
               onPositionChanged: function(mouse) {
                 if (!pressed) return
+                // Assign, never accumulate: grabX is the pointer position at
+                // press, so this is the total displacement of the gesture.
+                // Adding it each time compounded the delta and the tile ran
+                // away from the cursor.
                 var point = mapToItem(canvas, mouse.x, mouse.y)
-                tile.dragDX += point.x - grabX
-                tile.dragDY += point.y - grabY
+                tile.dragDX = point.x - grabX
+                tile.dragDY = point.y - grabY
               }
 
               onReleased: {
-                var logicalX = Math.round(tile.modelData.x + tile.dragDX / canvas.factor)
-                var logicalY = Math.round(tile.modelData.y + tile.dragDY / canvas.factor)
+                var logicalX = Math.round(tile.tileData.x + tile.dragDX / canvas.factor)
+                var logicalY = Math.round(tile.tileData.y + tile.dragDY / canvas.factor)
                 // Clear the offset first so the position binding takes over the
                 // moment the committed model lands.
                 tile.dragDX = 0
                 tile.dragDY = 0
-                root.commitTile(tile.modelData.name, logicalX, logicalY)
+                root.commitTile(tile.tileData.name, logicalX, logicalY)
               }
             }
           }
