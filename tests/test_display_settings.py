@@ -433,6 +433,29 @@ class LayoutTests(unittest.TestCase):
         ]
         self.assertTrue(any("overlap" in p for p in ds.validate_layout(overlapping)))
 
+    def test_auto_positions_are_not_overlap_checked(self):
+        # A display being re-enabled has no meaningful position yet, so it is
+        # sent as "auto". Treating that as 0x0 made it collide with whatever
+        # was already there and the display could never be switched back on.
+        layout = [
+            self.rule("HDMI-A-1", "0x0", mode="2560x1440@60.00"),
+            self.rule("eDP-1", "auto", mode="1920x1200@60.00"),
+        ]
+        self.assertEqual(ds.validate_layout(layout), [])
+
+    def test_auto_position_is_accepted_by_the_writer(self):
+        rendered = ds.render_rule(
+            {"output": "eDP-1", "mode": "preferred", "position": "auto", "scale": 1.25}
+        )
+        self.assertIn('position = "auto"', rendered)
+
+    def test_reenabling_writes_disabled_false(self):
+        # Omitting the field leaves the output off; Hyprland needs it stated.
+        rendered = ds.render_rule(
+            {"output": "eDP-1", "mode": "preferred", "position": "auto", "disabled": False}
+        )
+        self.assertIn("disabled = false", rendered)
+
     def test_rejects_all_disabled(self):
         layout = [self.rule("eDP-1", "0x0", disabled=True)]
         self.assertTrue(any("enabled" in p for p in ds.validate_layout(layout)))

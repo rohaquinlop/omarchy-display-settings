@@ -150,7 +150,18 @@ Panel {
   function toggleDisplay(display) {
     // Refuse to turn off the last display rather than let the backend reject it.
     if (!display.disabled && root.enabledCount <= 1) return
-    root.preview(root.layoutWith(display.name, { disabled: !display.disabled }))
+
+    var changes = { disabled: !display.disabled }
+    if (display.disabled) {
+      // Turning one back on. A disabled output reports 0x0 and no modes, so
+      // reusing its reported position drops it on top of whatever is already
+      // there and validation rejects the whole apply — the display simply
+      // refuses to come back with no explanation. Let Hyprland place it, and
+      // the next read reports the concrete position it chose.
+      changes.position = "auto"
+      changes.mode = "preferred"
+    }
+    root.preview(root.layoutWith(display.name, changes))
   }
 
   function setPrimary(name) {
