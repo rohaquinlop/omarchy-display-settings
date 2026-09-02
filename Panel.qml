@@ -341,7 +341,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(620))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(820))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -675,7 +675,31 @@ Panel {
                   font.pixelSize: Style.font.body
                 }
 
+                // Clicking the star makes this display primary; clicking the
+                // row toggles it on or off.
                 Text {
+                  id: primaryStar
+                  anchors.right: enabledMark.left
+                  anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  visible: root.outputs.length > 1 && !modelData.disabled
+                  text: root.primaryName === modelData.name ? "★" : "☆"
+                  color: root.bar ? root.bar.foreground : Color.foreground
+                  opacity: root.primaryName === modelData.name ? 1.0 : 0.35
+                  font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                  font.pixelSize: Style.font.body
+
+                  MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(4)
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.setPrimary(modelData.name)
+                  }
+                }
+
+                Text {
+                  id: enabledMark
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   textFormat: Text.PlainText
@@ -685,8 +709,15 @@ Panel {
                   font.pixelSize: Style.font.body
                 }
 
+                // Stops short of the star, which owns its own clicks. Filling
+                // the row would put this on top and swallow them, since later
+                // siblings win the hit test.
                 MouseArea {
-                  anchors.fill: parent
+                  anchors.left: parent.left
+                  anchors.top: parent.top
+                  anchors.bottom: parent.bottom
+                  anchors.right: primaryStar.visible ? primaryStar.left : parent.right
+                  anchors.rightMargin: Style.space(6)
                   cursorShape: Qt.PointingHandCursor
                   onClicked: root.toggleDisplay(modelData)
                 }
