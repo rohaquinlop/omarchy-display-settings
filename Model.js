@@ -199,3 +199,28 @@ function anyOverlap(tiles) {
       if (!tiles[i].disabled && !tiles[j].disabled && overlaps(tiles[i], tiles[j])) return true
   return false
 }
+
+// What an apply payload contains. `primary` is included only when the caller
+// is actually asking to set one -- never a fallback to "whatever the current
+// primary is". Hyprland never clears cursor:default_monitor when a display
+// disconnects, so a payload that resent that stale name on every unrelated
+// change (a scale tweak, a toggle, ...) got the whole apply rejected once the
+// primary display was gone.
+function buildApplyPayload(layout, primary) {
+  return { layout: layout, primary: primary || "" }
+}
+
+// How the engine's JSON result (or lack of one) maps to UI state, shared by
+// every Process that calls the engine (apply, confirm, revert) instead of
+// three slightly different inline handlers. `resultJson` is the parsed
+// result, or null/undefined when the process produced no parseable output at
+// all -- the caller decides what to do with that case, since only it knows
+// whether a more specific error (e.g. a nonzero exit code) is already shown.
+function describeEngineResult(resultJson) {
+  var result = resultJson || {}
+  if (result.ok) return { ok: true, error: "" }
+  var problems = result.problems || []
+  if (problems.length) return { ok: false, error: String(problems[0]) }
+  if (result.error) return { ok: false, error: String(result.error) }
+  return { ok: false, error: "could not apply that change" }
+}

@@ -198,5 +198,53 @@ check(
 equal(boundingBox([anchor, { name: "b", x: 1536, y: 0, width: 960, height: 540 }]),
   { x: 0, y: 0, width: 2496, height: 960 }, "bounding box spans both displays")
 
+// --- buildApplyPayload(): primary is never inferred, only ever explicit ----
+
+equal(
+  buildApplyPayload([{ output: "eDP-1" }], "eDP-1"),
+  { layout: [{ output: "eDP-1" }], primary: "eDP-1" },
+  "an explicit primary is carried through"
+)
+
+equal(
+  buildApplyPayload([{ output: "eDP-1" }], undefined),
+  { layout: [{ output: "eDP-1" }], primary: "" },
+  "no primary argument means no primary in the payload -- never a fallback"
+)
+
+equal(
+  buildApplyPayload([{ output: "eDP-1" }], ""),
+  { layout: [{ output: "eDP-1" }], primary: "" },
+  "an explicit empty primary stays empty"
+)
+
+// --- describeEngineResult(): one place all three engine calls agree on ----
+
+equal(describeEngineResult({ ok: true }), { ok: true, error: "" }, "success carries no error")
+
+equal(
+  describeEngineResult({ ok: false, problems: ["eDP-1 and HDMI-A-1 overlap", "other"] }),
+  { ok: false, error: "eDP-1 and HDMI-A-1 overlap" },
+  "the first validation problem wins over any other field"
+)
+
+equal(
+  describeEngineResult({ ok: false, error: "permission denied" }),
+  { ok: false, error: "permission denied" },
+  "a top-level error (confirm/revert failures) is used when there are no problems"
+)
+
+equal(
+  describeEngineResult({}),
+  { ok: false, error: "could not apply that change" },
+  "an empty/unparseable result falls back to a generic message"
+)
+
+equal(
+  describeEngineResult(null),
+  { ok: false, error: "could not apply that change" },
+  "a null result (nothing to parse) is treated the same as empty"
+)
+
 console.log(checks - failures + "/" + checks + " checks passed")
 process.exit(failures ? 1 : 0)
