@@ -34,6 +34,10 @@ Panel {
   // Hyprland has no primary flag; the engine composes it from
   // cursor:default_monitor plus the home of workspace 1.
   property string primaryName: ""
+  // False when primaryName names a display that is no longer connected --
+  // Hyprland never clears cursor:default_monitor on disconnect, so this is
+  // the only way to tell "no primary" apart from "a stale one".
+  property bool primaryConnected: false
   property bool busy: false
   property string lastError: ""
 
@@ -160,7 +164,7 @@ Panel {
     // json.load until the pipe closes, and a missed close would leave `busy`
     // latched true — silently swallowing every later click.
     applyProc.command = [root.engine, "apply",
-      JSON.stringify({ layout: layout, primary: primary || root.primaryName })]
+      JSON.stringify(Model.buildApplyPayload(layout, primary))]
     applyProc.running = true
   }
 
@@ -229,6 +233,7 @@ Panel {
           root.outputs = parsed.outputs || []
           root.configInfo = parsed.config || ({})
           root.primaryName = String(parsed.primary || "")
+          root.primaryConnected = Boolean(parsed.primaryConnected)
           // A revert armed by an earlier preview keeps running whether or not
           // this panel is open. Pick the countdown back up rather than let the
           // display change back with no explanation on screen.
@@ -269,16 +274,21 @@ Panel {
       waitForEnd: true
       onStreamFinished: {
         root.busy = false
-        var result = ({})
-        try { result = JSON.parse(String(text || "{}")) } catch (error) { result = ({}) }
-        if (result.ok) {
+        // Distinguish "no parseable output at all" (the process likely died
+        // before printing anything) from "parsed fine, and it says ok:false".
+        // Only the latter should produce a generic fallback message -- the
+        // former already has a more specific one from onExited, and letting
+        // this handler stomp it with "could not apply that change" was the
+        // bug: whichever handler happened to run last silently won.
+        var result = null
+        try { result = JSON.parse(String(text || "")) } catch (error) { result = null }
+        if (result && result.ok) {
           root.previewing = true
           root.secondsRemaining = result.secondsRemaining || 15
           countdown.restart()
         } else {
           root.previewing = false
-          var problems = result.problems || []
-          root.lastError = problems.length ? String(problems[0]) : "could not apply that change"
+          if (result !== null) root.lastError = Model.describeEngineResult(result).error
         }
         root.refresh()
       }
@@ -288,13 +298,36 @@ Panel {
   Process {
     id: confirmProc
     command: [root.engine, "confirm"]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.refresh() }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        // A failed write (permission denied, disk full, a broken symlink
+        // target) used to be silently swallowed here: the revert safety net
+        // is already cancelled by the time confirm attempts the write, so a
+        // failure with no visible error left the user believing nothing was
+        // wrong while nothing had actually been saved.
+        var result = null
+        try { result = JSON.parse(String(text || "")) } catch (error) { result = null }
+        var described = Model.describeEngineResult(result)
+        root.lastError = described.ok ? "" : described.error
+        root.refresh()
+      }
+    }
   }
 
   Process {
     id: revertProc
     command: [root.engine, "revert"]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.refresh() }
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var result = null
+        try { result = JSON.parse(String(text || "")) } catch (error) { result = null }
+        var described = Model.describeEngineResult(result)
+        root.lastError = described.ok ? "" : described.error
+        root.refresh()
+      }
+    }
   }
 
   Process {
@@ -662,10 +695,18 @@ Panel {
           PanelSeparator { width: parent.width }
 
           // ---------- primary display ----------
+          //
+          // Normally moot with one display -- there's nothing to choose
+          // between -- so the section stays hidden then. But a primary
+          // display can disconnect and leave exactly one output behind with
+          // a primary that no longer matches anything: Hyprland never clears
+          // cursor:default_monitor on disconnect. The section reappears in
+          // exactly that case so there is still a way to fix it.
           Column {
             width: parent.width
             spacing: Style.space(6)
             visible: root.outputs.length > 1
+              || (root.primaryName !== "" && !root.primaryConnected)
 
             PanelSectionHeader { text: "PRIMARY DISPLAY" }
 
@@ -683,6 +724,19 @@ Panel {
               width: parent.width
               wrapMode: Text.WordWrap
               textFormat: Text.PlainText
+              visible: root.primaryName !== "" && !root.primaryConnected
+              text: "⚠ " + root.primaryName + " is disconnected — pick a new primary."
+              color: root.bar ? root.bar.foreground : Color.foreground
+              opacity: 0.75
+              font.family: root.bar ? root.bar.fontFamily : Style.font.family
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              width: parent.width
+              wrapMode: Text.WordWrap
+              textFormat: Text.PlainText
+              visible: !(root.primaryName !== "" && !root.primaryConnected)
               text: "The pointer starts here, and workspace 1 lives here."
               color: root.bar ? root.bar.foreground : Color.foreground
               opacity: 0.55
@@ -747,10 +801,15 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(12)
 
-                  // Set primary.
+                  // Set primary. Visible under the same condition as the
+                  // PRIMARY DISPLAY section above: normally only with more
+                  // than one display, but also for the one remaining display
+                  // when the stored primary is stale (see that section).
                   Text {
                     textFormat: Text.PlainText
-                    visible: root.outputs.length > 1 && !displayRow.modelData.disabled
+                    visible: (root.outputs.length > 1
+                        || (root.primaryName !== "" && !root.primaryConnected))
+                      && !displayRow.modelData.disabled
                     text: root.primaryName === displayRow.modelData.name ? "★" : "☆"
                     color: root.bar ? root.bar.foreground : Color.foreground
                     opacity: root.primaryName === displayRow.modelData.name ? 1.0 : 0.35
