@@ -573,7 +573,7 @@ Panel {
 
             PanelSectionHeader { text: "DISPLAY" }
 
-            Dropdown {
+            FixedDropdown {
               width: parent.width
               showLabel: false
               value: root.selectedName
@@ -604,7 +604,7 @@ Panel {
               font.pixelSize: Style.font.body
             }
 
-            Dropdown {
+            FixedDropdown {
               width: parent.width
               showLabel: false
               visible: root.selected !== null && root.selected.resolutions.length > 1
@@ -639,7 +639,7 @@ Panel {
 
             PanelSectionHeader { text: "REFRESH RATE" }
 
-            Dropdown {
+            FixedDropdown {
               width: parent.width
               showLabel: false
               value: root.selected ? Model.refreshOf(root.selected.mode) : ""
@@ -710,7 +710,7 @@ Panel {
 
             PanelSectionHeader { text: "PRIMARY DISPLAY" }
 
-            Dropdown {
+            FixedDropdown {
               width: parent.width
               showLabel: false
               value: root.primaryName

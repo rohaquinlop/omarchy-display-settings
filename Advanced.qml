@@ -155,7 +155,11 @@ Item {
     }
 
     // Keyboard focus is a layer-shell property; the key handler itself lives on
-    // a child item, as the stock image-picker overlay does.
+    // a child item, as the stock image-picker overlay does. It wraps the
+    // ScrollView (rather than sitting beside it) so an unhandled Escape from
+    // a focused descendant -- e.g. a dropdown's trigger, after its own list
+    // closes -- bubbles up through this item and still closes the sheet,
+    // instead of bubbling up a sibling branch that never reaches it.
     Item {
       anchors.fill: parent
       focus: true
@@ -163,199 +167,199 @@ Item {
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Escape) { root.close(); event.accepted = true }
       }
-    }
 
-    ScrollView {
-      id: scroller
-      anchors.centerIn: parent
-      width: Math.min(parent.width - Style.space(80), Style.space(560))
-      height: Math.min(parent.height - Style.space(80), sheet.implicitHeight)
-      clip: true
-
-      Column {
-        id: sheet
-        width: scroller.availableWidth
-        spacing: Style.space(12)
-
-        Text {
-          textFormat: Text.PlainText
-          text: "Advanced"
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.display
-        }
-
-        Text {
-          textFormat: Text.PlainText
-          text: root.display ? root.display.name : ""
-          color: root.foreground
-          opacity: 0.6
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        PanelSeparator { width: parent.width }
-
-        Dropdown {
-          width: parent.width
-          label: "Orientation"
-          value: root.currentOf("transform", "0")
-          options: root.transformOptions
-          onChanged: function(value) { root.set("transform", parseInt(value, 10)) }
-        }
-
-        Dropdown {
-          width: parent.width
-          label: "Variable refresh rate"
-          value: root.pending["vrr"] !== undefined
-            ? String(root.pending["vrr"])
-            : (root.display && root.display.vrr ? "1" : "0")
-          options: root.vrrOptions
-          onChanged: function(value) { root.set("vrr", parseInt(value, 10)) }
-        }
-
-        Dropdown {
-          width: parent.width
-          label: "Colour depth"
-          value: root.currentOf("bitdepth", "8")
-          options: root.bitdepthOptions
-          onChanged: function(value) { root.set("bitdepth", parseInt(value, 10)) }
-        }
-
-        Dropdown {
-          width: parent.width
-          label: "Colour management"
-          value: root.currentOf("cm", "auto")
-          options: root.cmOptions
-          onChanged: function(value) { root.set("cm", value) }
-        }
-
-        // Ui/TextField inherits Qt Quick Controls TextField, which carries no
-        // label of its own, so each field states its own name above the input.
-        LabeledField {
-          width: parent.width
-          label: "Mirror of"
-          placeholder: "connector name, e.g. eDP-1"
-          text: root.currentOf("mirror", "")
-          onEdited: function(value) {
-            value === "" ? root.clear("mirror") : root.set("mirror", value)
-          }
-        }
-
-        LabeledField {
-          width: parent.width
-          label: "ICC profile"
-          placeholder: "path to a .icc file"
-          text: root.currentOf("icc", "")
-          onEdited: function(value) {
-            value === "" ? root.clear("icc") : root.set("icc", value)
-          }
-        }
-
-        // Ui/NumberField is integer-only; these two are fractional, so they
-        // take a numeric text field instead. The backend bounds them either way.
-        LabeledField {
-          width: parent.width
-          label: "SDR brightness"
-          placeholder: "1.0"
-          text: root.currentOf("sdrbrightness", "")
-          onEdited: function(value) {
-            value === "" ? root.clear("sdrbrightness") : root.set("sdrbrightness", Number(value))
-          }
-        }
-
-        LabeledField {
-          width: parent.width
-          label: "SDR saturation"
-          placeholder: "1.0"
-          text: root.currentOf("sdrsaturation", "")
-          onEdited: function(value) {
-            value === "" ? root.clear("sdrsaturation") : root.set("sdrsaturation", Number(value))
-          }
-        }
-
-        PanelSeparator { width: parent.width }
-
-        PanelSectionHeader { text: "OTHER FIELDS" }
-
-        Text {
-          width: parent.width
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          text: "Any documented HL.MonitorSpec field, for hardware this build "
-            + "has no control for. Rejected keys are reported below."
-          color: root.foreground
-          opacity: 0.6
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
-
-          TextField {
-            width: (parent.width - Style.space(6) * 2 - Style.space(70)) / 2
-            placeholderText: "field"
-            text: root.rawKey
-            onTextChanged: root.rawKey = text
-          }
-
-          TextField {
-            width: (parent.width - Style.space(6) * 2 - Style.space(70)) / 2
-            placeholderText: "value"
-            text: root.rawValue
-            onTextChanged: root.rawValue = text
-          }
-
-          Button {
-            width: Style.space(70)
-            text: "Add"
-            bordered: true
-            onClicked: root.addRaw()
-          }
-        }
-
-        // What will actually be written, so nothing is a surprise.
+      ScrollView {
+        id: scroller
+        anchors.centerIn: parent
+        width: Math.min(parent.width - Style.space(80), Style.space(560))
+        height: Math.min(parent.height - Style.space(80), sheet.implicitHeight)
+        clip: true
+  
         Column {
-          width: parent.width
-          spacing: Style.space(2)
-          visible: Object.keys(root.pending).length > 0
-
-          PanelSectionHeader { text: "PENDING CHANGES" }
-
-          Repeater {
-            model: Object.keys(root.pending)
-            delegate: Text {
-              required property string modelData
-              textFormat: Text.PlainText
-              text: modelData + " = " + root.pending[modelData]
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+          id: sheet
+          width: scroller.availableWidth
+          spacing: Style.space(12)
+  
+          Text {
+            textFormat: Text.PlainText
+            text: "Advanced"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.display
+          }
+  
+          Text {
+            textFormat: Text.PlainText
+            text: root.display ? root.display.name : ""
+            color: root.foreground
+            opacity: 0.6
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+  
+          PanelSeparator { width: parent.width }
+  
+          FixedDropdown {
+            width: parent.width
+            label: "Orientation"
+            value: root.currentOf("transform", "0")
+            options: root.transformOptions
+            onChanged: function(value) { root.set("transform", parseInt(value, 10)) }
+          }
+  
+          FixedDropdown {
+            width: parent.width
+            label: "Variable refresh rate"
+            value: root.pending["vrr"] !== undefined
+              ? String(root.pending["vrr"])
+              : (root.display && root.display.vrr ? "1" : "0")
+            options: root.vrrOptions
+            onChanged: function(value) { root.set("vrr", parseInt(value, 10)) }
+          }
+  
+          FixedDropdown {
+            width: parent.width
+            label: "Colour depth"
+            value: root.currentOf("bitdepth", "8")
+            options: root.bitdepthOptions
+            onChanged: function(value) { root.set("bitdepth", parseInt(value, 10)) }
+          }
+  
+          FixedDropdown {
+            width: parent.width
+            label: "Colour management"
+            value: root.currentOf("cm", "auto")
+            options: root.cmOptions
+            onChanged: function(value) { root.set("cm", value) }
+          }
+  
+          // Ui/TextField inherits Qt Quick Controls TextField, which carries no
+          // label of its own, so each field states its own name above the input.
+          LabeledField {
+            width: parent.width
+            label: "Mirror of"
+            placeholder: "connector name, e.g. eDP-1"
+            text: root.currentOf("mirror", "")
+            onEdited: function(value) {
+              value === "" ? root.clear("mirror") : root.set("mirror", value)
             }
           }
-        }
-
-        Text {
-          width: parent.width
-          wrapMode: Text.WordWrap
-          textFormat: Text.PlainText
-          visible: root.errorText !== ""
-          text: "⚠ " + root.errorText
-          color: root.foreground
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-        }
-
-        Row {
-          spacing: Style.space(10)
-          Button { text: "Cancel"; bordered: true; onClicked: root.close() }
-          Button {
-            text: "Apply"
-            bordered: true
-            enabled: Object.keys(root.pending).length > 0
-            onClicked: root.apply()
+  
+          LabeledField {
+            width: parent.width
+            label: "ICC profile"
+            placeholder: "path to a .icc file"
+            text: root.currentOf("icc", "")
+            onEdited: function(value) {
+              value === "" ? root.clear("icc") : root.set("icc", value)
+            }
+          }
+  
+          // Ui/NumberField is integer-only; these two are fractional, so they
+          // take a numeric text field instead. The backend bounds them either way.
+          LabeledField {
+            width: parent.width
+            label: "SDR brightness"
+            placeholder: "1.0"
+            text: root.currentOf("sdrbrightness", "")
+            onEdited: function(value) {
+              value === "" ? root.clear("sdrbrightness") : root.set("sdrbrightness", Number(value))
+            }
+          }
+  
+          LabeledField {
+            width: parent.width
+            label: "SDR saturation"
+            placeholder: "1.0"
+            text: root.currentOf("sdrsaturation", "")
+            onEdited: function(value) {
+              value === "" ? root.clear("sdrsaturation") : root.set("sdrsaturation", Number(value))
+            }
+          }
+  
+          PanelSeparator { width: parent.width }
+  
+          PanelSectionHeader { text: "OTHER FIELDS" }
+  
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            text: "Any documented HL.MonitorSpec field, for hardware this build "
+              + "has no control for. Rejected keys are reported below."
+            color: root.foreground
+            opacity: 0.6
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+  
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+  
+            TextField {
+              width: (parent.width - Style.space(6) * 2 - Style.space(70)) / 2
+              placeholderText: "field"
+              text: root.rawKey
+              onTextChanged: root.rawKey = text
+            }
+  
+            TextField {
+              width: (parent.width - Style.space(6) * 2 - Style.space(70)) / 2
+              placeholderText: "value"
+              text: root.rawValue
+              onTextChanged: root.rawValue = text
+            }
+  
+            Button {
+              width: Style.space(70)
+              text: "Add"
+              bordered: true
+              onClicked: root.addRaw()
+            }
+          }
+  
+          // What will actually be written, so nothing is a surprise.
+          Column {
+            width: parent.width
+            spacing: Style.space(2)
+            visible: Object.keys(root.pending).length > 0
+  
+            PanelSectionHeader { text: "PENDING CHANGES" }
+  
+            Repeater {
+              model: Object.keys(root.pending)
+              delegate: Text {
+                required property string modelData
+                textFormat: Text.PlainText
+                text: modelData + " = " + root.pending[modelData]
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+            }
+          }
+  
+          Text {
+            width: parent.width
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            visible: root.errorText !== ""
+            text: "⚠ " + root.errorText
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+  
+          Row {
+            spacing: Style.space(10)
+            Button { text: "Cancel"; bordered: true; onClicked: root.close() }
+            Button {
+              text: "Apply"
+              bordered: true
+              enabled: Object.keys(root.pending).length > 0
+              onClicked: root.apply()
+            }
           }
         }
       }
