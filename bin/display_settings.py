@@ -163,6 +163,18 @@ def modes_match(a: str, b: str) -> bool:
     return pa[0] == pb[0] and pa[1] == pb[1] and abs(pa[2] - pb[2]) <= REFRESH_TOLERANCE
 
 
+def mode_or_preferred(width: int, height: int, refresh: float) -> str:
+    """Canonical mode string, or "preferred" when the output reports no real mode.
+
+    A disabled output reports width=height=0, which canonicalizes to the
+    non-empty, meaningless "0x0@0.00" rather than falling back naturally —
+    so the zero case is checked explicitly instead of relying on `or`.
+    """
+    if width <= 0 or height <= 0:
+        return "preferred"
+    return canonical_mode(f"{width}x{height}@{refresh}") or "preferred"
+
+
 def group_modes(modes: list[str]) -> tuple[list[str], dict[str, list[str]]]:
     """Return (resolutions in advertised order, {resolution: [refresh strings]})."""
     resolutions: list[str] = []
@@ -836,7 +848,7 @@ def describe(monitor: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     height = int(monitor.get("height") or 0)
     scale = float(monitor.get("scale") or 1.0)
     transform = int(monitor.get("transform") or 0)
-    current_mode = canonical_mode(f"{width}x{height}@{float(monitor.get('refreshRate') or 0)}")
+    current_mode = mode_or_preferred(width, height, float(monitor.get("refreshRate") or 0))
 
     mm_width = float(monitor.get("physicalWidth") or 0)
     mm_height = float(monitor.get("physicalHeight") or 0)
@@ -897,8 +909,10 @@ def read_state() -> dict[str, Any]:
             text = handle.read()
     config = scan_config(text)
     monitors = hypr_monitors()
+    outputs = [describe(m, config) for m in monitors]
+    primary = current_primary()
     return {
-        "outputs": [describe(m, config) for m in monitors],
+        "outputs": outputs,
         "config": {
             "path": path,
             "realPath": real,
@@ -908,7 +922,8 @@ def read_state() -> dict[str, Any]:
         },
         "pending": read_pending(),
         "pendingSeconds": pending_seconds_remaining(),
-        "primary": current_primary(),
+        "primary": primary,
+        "primaryConnected": bool(primary) and any(o["name"] == primary for o in outputs),
     }
 
 
@@ -1168,10 +1183,11 @@ def current_layout() -> list[dict[str, Any]]:
             continue
         rule: dict[str, Any] = {
             "output": name,
-            "mode": canonical_mode(
-                f"{monitor.get('width')}x{monitor.get('height')}@{monitor.get('refreshRate')}"
-            )
-            or "preferred",
+            "mode": mode_or_preferred(
+                int(monitor.get("width") or 0),
+                int(monitor.get("height") or 0),
+                float(monitor.get("refreshRate") or 0),
+            ),
             "position": f"{int(monitor.get('x') or 0)}x{int(monitor.get('y') or 0)}",
             "scale": float(monitor.get("scale") or 1.0),
             "transform": int(monitor.get("transform") or 0),
@@ -1247,25 +1263,29 @@ def apply_layout(layout: list[dict[str, Any]], primary: str = "") -> dict[str, A
 
     layout = normalize_positions(layout)
 
+    # A primary that no longer names one of this layout's outputs is stale,
+    # not a request being made right now — Hyprland never clears
+    # cursor:default_monitor when a display disconnects, so a caller that
+    # blindly resends "the current primary" on every change would otherwise
+    # get every unrelated change rejected once the primary display is gone.
+    # Leave primary untouched rather than fail the whole apply over it.
+    names = {str(rule.get("output", "")) for rule in layout}
+    if primary and primary not in names:
+        primary = ""
+
     # Chained previews must not lose the user's real starting point. Applying
     # again before confirming used to overwrite the pending layout with the
     # already-previewed state, so the timer "restored" a value the user had
     # never accepted — the display appeared to bounce between two settings.
-    # The first unconfirmed layout is the one to come back to.
-    if primary:
-        names = {str(rule.get("output", "")) for rule in layout}
-        if primary not in names:
-            return {
-                "ok": False,
-                "stage": "validate",
-                "problems": [primary + " is not one of the displays in this layout"],
-            }
-
+    # The first unconfirmed layout (and primary) are what to come back to.
     existing = read_pending()
     previous = existing["layout"] if existing and existing.get("layout") else current_layout()
+    previous_primary = (
+        existing.get("primary") if existing and "primary" in existing else current_primary()
+    )
     write_pending({
         "layout": previous,
-        "primary": current_primary(),
+        "primary": previous_primary,
         "expiresAt": time.time() + REVERT_SECONDS,
     })
     armed = arm_revert()
@@ -1274,7 +1294,7 @@ def apply_layout(layout: list[dict[str, Any]], primary: str = "") -> dict[str, A
         # We restored here and now, so the armed revert has nothing left to do.
         # Leaving it running would fire a redundant restore later and leave a
         # stale pending file behind to confuse the next apply.
-        restore(previous, (existing or {}).get("primary"))
+        restore(previous, previous_primary)
         stop_revert_unit()
         clear_pending()
         return {"ok": False, "stage": stage, "problems": problems, "reverted": True}

@@ -529,6 +529,14 @@ class DescribeTests(unittest.TestCase):
         self.assertTrue(outputs["HDMI-A-1"]["disabled"])
         self.assertEqual(outputs["HDMI-A-1"]["modes"], [])
 
+    def test_disabled_output_reports_preferred_not_a_zero_mode(self):
+        # A disabled output reports width=height=0, which canonicalizes to
+        # the meaningless but non-empty "0x0@0.00" unless the zero case is
+        # special-cased -- so the natural `or "preferred"` fallback never
+        # fires and a fabricated mode leaks into the UI and monitors.lua.
+        outputs = {o["name"]: o for o in self.describe_all("monitors_disabled.json")}
+        self.assertEqual(outputs["HDMI-A-1"]["mode"], "preferred")
+
     def test_managed_flag_follows_the_block(self):
         config = ds.scan_config(fixture("lua_hasblock.lua"))
         output = ds.describe(monitors("monitors_laptop.json")[0], config)
@@ -618,6 +626,47 @@ class VerifyTests(unittest.TestCase):
         # Every rule it produces must survive validation and rendering.
         for rule in layout:
             ds.render_rule(rule)
+
+    def test_current_layout_reports_preferred_for_a_disabled_output(self):
+        self.use(monitors("monitors_disabled.json"))
+        layout = {r["output"]: r for r in ds.current_layout()}
+        self.assertEqual(layout["HDMI-A-1"]["mode"], "preferred")
+        ds.render_rule(layout["HDMI-A-1"])
+
+
+class ReadStateTests(unittest.TestCase):
+    """read_state()'s primaryConnected signal, with hyprctl fully stubbed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        os.environ["XDG_STATE_HOME"] = self.tmp.name
+        os.environ["XDG_CONFIG_HOME"] = self.tmp.name
+
+        self.originals = {"hypr_monitors": ds.hypr_monitors, "current_primary": ds.current_primary}
+
+        def restore():
+            for name, value in self.originals.items():
+                setattr(ds, name, value)
+            os.environ.pop("XDG_STATE_HOME", None)
+            os.environ.pop("XDG_CONFIG_HOME", None)
+
+        self.addCleanup(restore)
+        ds.hypr_monitors = lambda: monitors("monitors_dual.json")
+
+    def test_primary_connected_when_it_matches_a_live_output(self):
+        ds.current_primary = lambda: "eDP-1"
+        self.assertTrue(ds.read_state()["primaryConnected"])
+
+    def test_primary_not_connected_once_its_display_disconnects(self):
+        # The exact bug report this change fixes: HDMI-A-1 was primary, then
+        # disconnected. hyprctl keeps reporting it as the primary regardless.
+        ds.current_primary = lambda: "HDMI-A-9"
+        self.assertFalse(ds.read_state()["primaryConnected"])
+
+    def test_primary_not_connected_when_none_is_set(self):
+        ds.current_primary = lambda: ""
+        self.assertFalse(ds.read_state()["primaryConnected"])
 
 
 class PrimaryDisplayTests(unittest.TestCase):
@@ -822,6 +871,13 @@ class ApplyStateMachineTests(unittest.TestCase):
         ds.apply_layout(self.good_layout())
         self.assertEqual(order[0], "arm")
 
+    def test_unrecognized_primary_does_not_block_an_unrelated_change(self):
+        # The exact reported bug: a stale primary naming a disconnected
+        # display must not block a plain scale/mode change on what remains.
+        result = ds.apply_layout(self.good_layout(), primary="HDMI-A-9")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["primary"], "")
+
     def test_invalid_layout_never_touches_the_compositor(self):
         result = ds.apply_layout([{"output": "eDP-1", "mode": "1920x1200@60.00", "disabled": True}])
         self.assertFalse(result["ok"])
@@ -893,6 +949,50 @@ class ApplyStateMachineTests(unittest.TestCase):
         self.assertTrue(result["ok"], result)
         self.assertEqual(ds.read_pending()["layout"], first)
         self.assertEqual(first[0]["scale"], 1.25, "the original scale must survive")
+
+    def test_chained_preview_keeps_the_original_primary_for_revert(self):
+        # Setting a new primary, then making any other change before
+        # confirming, must not let the intervening apply's fresh
+        # current_primary() reading overwrite the true original -- otherwise
+        # Revert/timeout restores the old layout but leaves the new,
+        # never-confirmed primary in place.
+        self.live = monitors("monitors_dual.json")
+
+        original_apply_primary = ds.apply_primary
+        original_current_primary = ds.current_primary
+        self.addCleanup(lambda: setattr(ds, "apply_primary", original_apply_primary))
+        self.addCleanup(lambda: setattr(ds, "current_primary", original_current_primary))
+
+        live_primary = {"name": "eDP-1"}
+        ds.current_primary = lambda: live_primary["name"]
+
+        def fake_apply_primary(name):
+            if name:
+                live_primary["name"] = name
+            return True, ""
+
+        ds.apply_primary = fake_apply_primary
+
+        layout = [
+            {"output": "eDP-1", "mode": "1920x1200@60.00", "position": "0x0", "scale": 1.25},
+            {"output": "HDMI-A-1", "mode": "2560x1440@59.95", "position": "1536x0", "scale": 1},
+        ]
+
+        # First preview: change primary from eDP-1 to HDMI-A-1.
+        result = ds.apply_layout(layout, primary="HDMI-A-1")
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(live_primary["name"], "HDMI-A-1")
+        self.assertEqual(ds.read_pending()["primary"], "eDP-1")
+
+        # Second, unrelated preview before confirming: must not overwrite the
+        # pending snapshot with the now-live "HDMI-A-1".
+        result = ds.apply_layout(layout)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(ds.read_pending()["primary"], "eDP-1")
+
+        # Reverting restores the true original primary, not "HDMI-A-1".
+        ds.cmd_revert()
+        self.assertEqual(live_primary["name"], "eDP-1")
 
     def test_pending_reports_seconds_remaining(self):
         ds.apply_layout(self.good_layout())
