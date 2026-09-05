@@ -530,9 +530,32 @@ Panel {
             spacing: Style.space(6)
             visible: root.brightnessAvailable
 
-            PanelSectionHeader { text: "BRIGHTNESS" }
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(brightnessHeader.implicitHeight, brightnessValue.implicitHeight)
+
+              PanelSectionHeader {
+                id: brightnessHeader
+                text: "BRIGHTNESS"
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                id: brightnessValue
+                textFormat: Text.PlainText
+                text: Math.round(brightnessSlider.dragging ? brightnessSlider.liveValue : root.brightnessPercent) + "%"
+                color: root.bar ? Qt.darker(root.bar.foreground, 1.4) : Color.foreground
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
 
             PanelSlider {
+              id: brightnessSlider
               width: parent.width
               bar: root.bar
               minimum: 1
@@ -548,9 +571,32 @@ Panel {
             width: parent.width
             spacing: Style.space(6)
 
-            PanelSectionHeader { text: "TEXT SIZE" }
+            Item {
+              width: parent.width
+              implicitHeight: Math.max(textSizeHeader.implicitHeight, textSizeValue.implicitHeight)
+
+              PanelSectionHeader {
+                id: textSizeHeader
+                text: "TEXT SIZE"
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                id: textSizeValue
+                textFormat: Text.PlainText
+                text: Math.round(textSizeSlider.dragging ? textSizeSlider.liveValue : root.textSizePx) + "px"
+                color: root.bar ? Qt.darker(root.bar.foreground, 1.4) : Color.foreground
+                font.family: root.bar ? root.bar.fontFamily : Style.font.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
 
             PanelSlider {
+              id: textSizeSlider
               width: parent.width
               bar: root.bar
               minimum: 9
